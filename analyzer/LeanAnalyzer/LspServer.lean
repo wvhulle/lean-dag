@@ -3,7 +3,6 @@ import Lean.Server.FileWorker
 import Lean.Server.Watchdog
 import Lean.Server.Requests
 import LeanAnalyzer.Types
-import LeanAnalyzer.ProofDag
 import LeanAnalyzer.Names
 import Services.BetterParser
 import Services.GoalsAt

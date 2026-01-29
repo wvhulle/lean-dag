@@ -20,8 +20,22 @@ require Paperproof from "lean"
 
 require mathlib from git "https://github.com/leanprover-community/mathlib4" @ "v4.26.0-rc2"
 
--- Uncomment this is you want to use paperproof statically
--- @[default_target]
--- lean_exe terminal where
---   srcDir := "lean"
---   supportInterpreter := true
+/-! ## Lean Analyzer - Proof DAG construction for TUI/visualization -/
+
+lean_lib «LeanAnalyzer» where
+  srcDir := "analyzer"
+
+lean_lib «LeanAnalyzerTests» where
+  srcDir := "analyzer"
+  roots := #[`Tests.Helpers, `Tests.SemanticTableau, `Tests.ProofStateChanges, `Tests.TacticSplitting, `Tests.Integration, `Tests.LspClient, `Tests.LspIntegration, `Tests.SemanticTableauRpc]
+
+lean_exe «lean-analyzer» where
+  srcDir := "analyzer"
+  root := `Main
+  supportInterpreter := true
+
+@[test_driver]
+lean_exe «lean-analyzer-tests» where
+  srcDir := "analyzer"
+  root := `Tests.Main
+  supportInterpreter := true

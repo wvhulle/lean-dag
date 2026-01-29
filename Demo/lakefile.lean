@@ -1,7 +1,7 @@
 import Lake
 open Lake DSL
 
-package «test-project» where
+package «demo» where
   leanOptions := #[
     ⟨`autoImplicit, false⟩
   ]

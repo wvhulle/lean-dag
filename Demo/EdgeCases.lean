@@ -59,3 +59,14 @@ theorem assumption_proof (p : Prop) (h : p) : p := by
 -- Proof with simp and lemmas
 theorem simp_proof (a b : Nat) : a + 0 + (b + 0) = a + b := by
   simp only [Nat.add_zero]
+
+-- Proof with inline by block (potential orphan)
+theorem inline_by_proof (n : Nat) : n + 0 = n := by
+  have h : 0 + n = n := by rw [Nat.zero_add]
+  rw [Nat.add_comm, h]
+
+-- Proof with constructor (two independent subgoals)
+theorem and_intro_proof (a b : Nat) : a = a ∧ b = b := by
+  constructor
+  · rfl
+  · rfl

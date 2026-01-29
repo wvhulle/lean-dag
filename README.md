@@ -45,6 +45,5 @@ Tests/              # Test suite
   Unit*.lean        # Unit tests (mock data)
   Rpc*.lean         # Integration tests (live server)
 
-Demos/              # Test fixtures
-  test-project/     # Sample Lean files for testing
+Demo/               # Sample Lean files for testing
 ```

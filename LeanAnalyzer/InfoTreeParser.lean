@@ -234,10 +234,12 @@ def computeGoalChanges (ctx : ContextInfo) (tInfo : TacticInfo) : RequestM (List
 
 def formatRewriteSteps (stx : Syntax) (steps : List ParsedStep) : List ParsedStep :=
   match stx with
-  | `(tactic| rw [$_,*] $(_)?)
-  | `(tactic| rewrite [$_,*] $(_)?) =>
-    let format s := let r := s.trim.dropRightWhile (· == ','); if r == "]" then "rfl" else r
-    steps.map fun s => { s with tacticString := s!"rw [{format s.tacticString}]" }
+  | `(tactic| rw [$args,*] $(_)?)
+  | `(tactic| rewrite [$args,*] $(_)?) =>
+    let rules := args.getElems.toList
+    steps.zipWith (fun step rule =>
+      let ruleStr := rule.raw.getSubstring?.map (·.toString.trim) |>.getD step.tacticString
+      { step with tacticString := s!"rw [{ruleStr}]" }) rules
   | _ => steps
 
 def compareNameNum : Name → Name → Bool

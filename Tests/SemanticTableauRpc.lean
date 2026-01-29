@@ -16,6 +16,7 @@ def parseProofDag (json : Json) : Except String ProofDag :=
   | .ok dagJson => FromJson.fromJson? dagJson
   | .error e => .error s!"Missing proofDag field: {e}"
 
+/-- Get proof DAG at position. Line/col are 1-indexed (editor style). -/
 def getProofDagAt (uri : String) (sessionId : UInt64) (line col : Nat) (requestId : Nat) : IpcM ProofDag := do
   let result ← callRpc requestId sessionId uri line col "LeanAnalyzer.getProofDag" (Json.mkObj [("mode", "tree")])
   match parseProofDag result with
@@ -45,8 +46,8 @@ unsafe def testLinearProofStructure : IO Unit := do
 
     let sessionId ← connectRpcSession 2 uri
 
-    -- Get DAG for contrapositive theorem (line 2, inside the proof)
-    let dag ← getProofDagAt uri sessionId 3 4 3
+    -- Logic.lean line 4: "  intro hnq hp" (1-indexed)
+    let dag ← getProofDagAt uri sessionId 4 5 3
 
     -- Verify basic structure
     assertTrue "has nodes" (!dag.nodes.isEmpty)
@@ -107,8 +108,8 @@ unsafe def testBranchingProofStructure : IO Unit := do
 
     let sessionId ← connectRpcSession 2 uri
 
-    -- Get DAG for or_assoc_logic (line 20, inside a cases proof)
-    let dag ← getProofDagAt uri sessionId 22 6 3
+    -- Logic.lean line 23: "    cases h with" inside or_assoc_logic (1-indexed)
+    let dag ← getProofDagAt uri sessionId 23 7 3
 
     assertTrue "has nodes" (!dag.nodes.isEmpty)
     assertSome "has root" dag.root
@@ -150,8 +151,8 @@ unsafe def testInductionProofStructure : IO Unit := do
 
     let sessionId ← connectRpcSession 2 uri
 
-    -- Get DAG for nat_add_zero (line 3, inside the induction proof)
-    let dag ← getProofDagAt uri sessionId 4 4 3
+    -- Induction.lean line 5: "  | zero => rfl" (1-indexed)
+    let dag ← getProofDagAt uri sessionId 5 5 3
 
     assertTrue "has nodes" (!dag.nodes.isEmpty)
 
@@ -189,7 +190,8 @@ unsafe def testGotoLocationsField : IO Unit := do
 
     let sessionId ← connectRpcSession 2 uri
 
-    let dag ← getProofDagAt uri sessionId 3 4 3
+    -- Logic.lean line 4: "  intro hnq hp" (1-indexed)
+    let dag ← getProofDagAt uri sessionId 4 5 3
 
     -- Verify gotoLocations field exists in goals (even if empty)
     for goal in dag.initialState.goals do
@@ -232,7 +234,8 @@ unsafe def testUsernameFiltering : IO Unit := do
 
     let sessionId ← connectRpcSession 2 uri
 
-    let dag ← getProofDagAt uri sessionId 0 10 3
+    -- Simple.lean line 1: "theorem simple_rfl : 1 = 1 := by rfl" (1-indexed)
+    let dag ← getProofDagAt uri sessionId 1 11 3
 
     -- Verify anonymous usernames are filtered to None
     for goal in dag.initialState.goals do
@@ -267,8 +270,8 @@ unsafe def testNewHypothesesIndices : IO Unit := do
 
     let sessionId ← connectRpcSession 2 uri
 
-    -- contrapositive proof introduces hypotheses with intro
-    let dag ← getProofDagAt uri sessionId 3 4 3
+    -- Logic.lean line 4: "  intro hnq hp" (1-indexed)
+    let dag ← getProofDagAt uri sessionId 4 5 3
 
     for node in dag.nodes do
       -- newHypotheses indices must be valid
@@ -303,7 +306,8 @@ unsafe def testTacticInfoFields : IO Unit := do
 
     let sessionId ← connectRpcSession 2 uri
 
-    let dag ← getProofDagAt uri sessionId 3 4 3
+    -- Logic.lean line 4: "  intro hnq hp" (1-indexed)
+    let dag ← getProofDagAt uri sessionId 4 5 3
 
     for node in dag.nodes do
       -- tactic.text must be non-empty

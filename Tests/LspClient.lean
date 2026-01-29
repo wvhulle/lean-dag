@@ -5,6 +5,19 @@ namespace Tests.LspClient
 
 open Lean Lsp Ipc JsonRpc IO
 
+/-!
+## Position Convention
+
+All line/column parameters in this module use **1-indexed positions** matching
+what editors display (e.g., line 1 is the first line, column 1 is the first character).
+
+Internally, these are converted to LSP's 0-indexed format before sending requests.
+LSP uses UTF-16 code units for columns, which matters for unicode characters.
+-/
+
+/-- Convert 1-indexed editor position to 0-indexed LSP position -/
+def editorToLsp (line col : Nat) : (Nat × Nat) := (line - 1, col - 1)
+
 def testProjectPath : System.FilePath := "Tests/samples/test-project"
 
 def fileUri (path : System.FilePath) : IO String := do
@@ -39,17 +52,19 @@ def openDocument (uri : String) (content : String) : IpcM Unit := do
 def waitForFileReady (uri : String) (version : Nat := 1) : IpcM Unit := do
   let _ ← collectDiagnostics 100 uri version
 
+/-- Call RPC method. Line/col are 1-indexed (editor style). -/
 def callRpc (requestId : Nat) (sessionId : UInt64) (uri : String) (line col : Nat) (method : String) (innerParams : Json) : IpcM Json := do
+  let (lspLine, lspCol) := editorToLsp line col
   let mode := innerParams.getObjValAs? String "mode" |>.toOption.getD "tree"
   let procedureParams := Json.mkObj [
     ("textDocument", Json.mkObj [("uri", toJson uri)]),
-    ("position", Json.mkObj [("line", line), ("character", col)]),
+    ("position", Json.mkObj [("line", lspLine), ("character", lspCol)]),
     ("mode", mode)
   ]
 
   let rpcParams := Json.mkObj [
     ("textDocument", Json.mkObj [("uri", toJson uri)]),
-    ("position", Json.mkObj [("line", line), ("character", col)]),
+    ("position", Json.mkObj [("line", lspLine), ("character", lspCol)]),
     ("sessionId", toJson sessionId),
     ("method", toJson method),
     ("params", procedureParams)
@@ -66,10 +81,12 @@ def connectRpcSession (requestId : Nat) (uri : String) : IpcM UInt64 := do
   | .ok sessionId => return sessionId
   | .error e => throw <| IO.userError s!"Failed to parse sessionId: {e}"
 
+/-- Request hover info. Line/col are 1-indexed (editor style). -/
 def hoverRequest (requestId : Nat) (uri : String) (line col : Nat) : IpcM (Option Hover) := do
+  let (lspLine, lspCol) := editorToLsp line col
   let params : HoverParams := {
     textDocument := { uri := uri }
-    position := ⟨line, col⟩
+    position := ⟨lspLine, lspCol⟩
   }
   writeRequest ⟨requestId, "textDocument/hover", params⟩
   let resp ← readResponseAs requestId (Option Hover)

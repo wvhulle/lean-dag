@@ -2,11 +2,11 @@ import Lean
 import Lean.Data.Lsp.Ipc
 import LeanAnalyzer
 import Tests.LspClient
-import Tests.Helpers
+import Tests.Harness
 
-namespace Tests.SemanticTableauRpc
+namespace Tests.RpcProofDag
 
-open Lean Lsp Ipc JsonRpc LeanAnalyzer Tests.LspClient Tests.Helpers
+open Lean Lsp Ipc JsonRpc LeanAnalyzer Tests.LspClient Tests.Harness
 
 def logicFile : System.FilePath := testProjectPath / "Logic.lean"
 def inductionFile : System.FilePath := testProjectPath / "Induction.lean"
@@ -324,7 +324,7 @@ unsafe def testTacticInfoFields : IO Unit := do
     IO.println "  ✓ tactic info fields valid"
 
 unsafe def runTests : IO Unit := do
-  printSection "Semantic Tableau RPC Validation Tests"
+  printSection "RPC ProofDag Validation Tests"
 
   testLinearProofStructure
   testBranchingProofStructure
@@ -334,6 +334,6 @@ unsafe def runTests : IO Unit := do
   testNewHypothesesIndices
   testTacticInfoFields
 
-  IO.println "\n  ✓ Semantic tableau RPC validation tests passed"
+  IO.println "\n  ✓ RPC ProofDag tests passed"
 
-end Tests.SemanticTableauRpc
+end Tests.RpcProofDag

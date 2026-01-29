@@ -1,11 +1,11 @@
 import Lean
 import Lean.Data.Lsp.Ipc
 import Tests.LspClient
-import Tests.Helpers
+import Tests.Harness
 
-namespace Tests.LspIntegration
+namespace Tests.RpcBasic
 
-open Lean Lsp Ipc JsonRpc Tests.LspClient Tests.Helpers
+open Lean Lsp Ipc JsonRpc Tests.LspClient Tests.Harness
 
 def basicLeanFile : System.FilePath := testProjectPath / "Simple.lean"
 
@@ -154,7 +154,7 @@ unsafe def testGetProofDagRpc : IO Unit := do
 unsafe def runTests : IO Unit := do
   IO.println ""
   IO.println "══════════════════════════════════════════════════════════════"
-  IO.println "  LSP Integration Tests (lean-analyzer)"
+  IO.println "  RPC Basic Tests"
   IO.println "══════════════════════════════════════════════════════════════"
   
   testLspServerStartup
@@ -164,6 +164,6 @@ unsafe def runTests : IO Unit := do
   testGetProofDagRpc
   
   IO.println ""
-  IO.println "  ✓ LSP integration tests complete"
+  IO.println "  ✓ RPC basic tests passed"
 
-end Tests.LspIntegration
+end Tests.RpcBasic

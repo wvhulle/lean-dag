@@ -8,7 +8,7 @@ require mathlib from git "https://github.com/leanprover-community/mathlib4" @ "v
 lean_lib «LeanAnalyzer» where
 
 lean_lib «Tests» where
-  roots := #[`Tests.Helpers, `Tests.SemanticTableau, `Tests.ProofStateChanges, `Tests.LspClient, `Tests.LspIntegration, `Tests.SemanticTableauRpc, `Tests.LspEdgeCases]
+  globs := #[.submodules `Tests]
 
 lean_exe «lean-analyzer» where
   root := `Main

@@ -18,7 +18,7 @@ LSP uses UTF-16 code units for columns, which matters for unicode characters.
 /-- Convert 1-indexed editor position to 0-indexed LSP position -/
 def editorToLsp (line col : Nat) : (Nat × Nat) := (line - 1, col - 1)
 
-def testProjectPath : System.FilePath := "Tests/samples/test-project"
+def testProjectPath : System.FilePath := "Demos/test-project"
 
 def fileUri (path : System.FilePath) : IO String := do
   let cwd ← IO.currentDir

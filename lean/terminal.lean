@@ -72,17 +72,14 @@ def staticPrintGoalInfo (printCtx : ContextInfo) (id : MVarId) : MetaM GoalInfo 
   let some decl := printCtx.mctx.findDecl? id | throwError "Goal not found"
   let lctx := decl.lctx |>.sanitizeNames.run' { options := {} }
   let ppCtx := printCtx.toPPContext lctx
-  let hyps ← lctx.foldrM (init := []) fun hypDecl acc => do
-    if hypDecl.isAuxDecl || hypDecl.isImplementationDetail then return acc
-    let type ← ppExprWithInfos ppCtx hypDecl.type
-    let value ← match hypDecl.value? with
-      | some v => some <$> ppExprWithInfos ppCtx v
-      | none => pure none
-    let isProof ← printCtx.runMetaM decl.lctx (mayBeProof hypDecl.toExpr)
-    return { username := hypDecl.userName.toString, type := type.fmt.pretty
-             value := value.map (·.fmt.pretty), id := hypDecl.fvarId.name.toString, isProof } :: acc
-  let targetType ← ppExprWithInfos ppCtx decl.type
-  return { username := decl.userName.toString, type := targetType.fmt.pretty, hyps, id }
+  let hyps ← lctx.foldrM (init := []) fun h acc => do
+    if h.isAuxDecl || h.isImplementationDetail then return acc
+    let type ← ppExprWithInfos ppCtx h.type
+    let value ← match h.value? with | some v => some <$> ppExprWithInfos ppCtx v | none => pure none
+    let isProof ← printCtx.runMetaM decl.lctx (mayBeProof h.toExpr)
+    return { username := h.userName.toString, type := type.fmt.pretty
+             value := value.map (·.fmt.pretty), id := h.fvarId.name.toString, isProof } :: acc
+  return { username := decl.userName.toString, type := (← ppExprWithInfos ppCtx decl.type).fmt.pretty, hyps, id }
 
 def staticGetUnassignedGoals (goals : List MVarId) (mctx : MetavarContext) : List MVarId :=
   goals.filter fun id => (mctx.findDecl? id).isSome && !mctx.eAssignment.contains id && !mctx.dAssignment.contains id
@@ -105,115 +102,82 @@ def staticGetGoalsChange (ctx : ContextInfo) (tInfo : TacticInfo) :
     let goalsInfoAfter ← goalsAfter.filter assignedMVars.contains |>.mapM (staticPrintGoalInfo printCtx)
     return some (tacticDependsOn, goalInfoBefore, goalsInfoAfter)
 
-partial def staticParseTacticInfo (infoTree : InfoTree) (ctx : ContextInfo) (info : Info)
-    (steps : List ProofStep) (allGoals : Std.HashSet GoalInfo) : MetaM Result := do
-  let some ctx := info.updateContext? ctx | panic! "unexpected context node"
-  let .ofTacticInfo tInfo := info | return { steps, allGoals }
-  let some tacticSubstring := getTacticSubstring tInfo | return { steps, allGoals }
+/-! ## Static Tactic Parsing (shared by tree and single-tactic modes) -/
 
+def findTheoremsForTactic (infoTree : InfoTree) (ctx : ContextInfo) (tInfo : TacticInfo) : MetaM (List TheoremSignature) :=
+  match ctx.mctx.findDecl? tInfo.goalsBefore.head!, getTacticSubstring tInfo with
+  | some goalDecl, some sub => ctx.runMetaM goalDecl.lctx (findTheoremsLikeHover infoTree sub.startPos sub.stopPos ctx goalDecl)
+  | _, _ => pure []
+
+partial def staticParseTacticCore (infoTree : InfoTree) (ctx : ContextInfo) (tInfo : TacticInfo)
+    (existingSteps : List ProofStep) : MetaM Result := do
+  let some tacticSubstring := getTacticSubstring tInfo | return { steps := existingSteps, allGoals := ∅ }
   let tacticString := prettifyTacticString tacticSubstring.toString
-  let steps := prettifySteps tInfo.stx steps
+  let steps := prettifySteps tInfo.stx existingSteps
   let proofTreeEdges ← staticGetGoalsChange ctx tInfo
   let currentGoals := proofTreeEdges.flatMap fun ⟨_, g₁, gs⟩ => g₁ :: gs
-  let allGoals := allGoals.insertMany currentGoals
+  let allGoals := Std.HashSet.ofList currentGoals |>.insertMany (steps.flatMap stepGoalsAfter)
   let orphanedGoals := currentGoals.foldl Std.HashSet.erase (noInEdgeGoals allGoals steps)
     |>.toArray.insertionSort (nameNumLt ·.id.name ·.id.name) |>.toList
-
-  let theorems ← match ctx.mctx.findDecl? tInfo.goalsBefore.head!, getTacticSubstring tInfo with
-    | some goalDecl, some sub =>
-      ctx.runMetaM goalDecl.lctx (findTheoremsLikeHover infoTree sub.startPos sub.stopPos ctx goalDecl)
-    | _, _ => pure []
-
+  let theorems ← findTheoremsForTactic infoTree ctx tInfo
   let newSteps := proofTreeEdges.filterMap fun ⟨tacticDependsOn, goalBefore, goalsAfter⟩ =>
-    if steps.any (·.goalBefore == goalBefore) then none
-    else some { tacticString, goalBefore, goalsAfter, tacticDependsOn
-                spawnedGoals := orphanedGoals, position := dummyPosition, theorems }
+    if existingSteps.any (·.goalBefore == goalBefore) then none
+    else some { tacticString, goalBefore, goalsAfter, tacticDependsOn, spawnedGoals := orphanedGoals, position := dummyPosition, theorems }
   return { steps := newSteps ++ steps, allGoals }
 
 partial def staticPostNode (infoTree : InfoTree) (ctx : ContextInfo) (info : Info)
     (results : List (Option Result)) : MetaM Result := do
-  let results := results.filterMap id
-  staticParseTacticInfo infoTree ctx info (results.flatMap (·.steps))
-    (Std.HashSet.ofList (results.flatMap (·.allGoals.toList)))
+  let some ctx := info.updateContext? ctx | panic! "unexpected context node"
+  let .ofTacticInfo tInfo := info | return { steps := [], allGoals := ∅ }
+  let filteredResults := results.filterMap id
+  let existingSteps := filteredResults.flatMap (·.steps)
+  staticParseTacticCore infoTree ctx tInfo existingSteps
 
 partial def staticBetterParser (infoTree : InfoTree) :=
   infoTree.visitM (postNode := fun ctx info _ results => staticPostNode infoTree ctx info results)
 
 /-! ## Position-based Lookup -/
 
-def positionInRange (pos startPos endPos : String.Pos.Raw) : Bool :=
-  startPos <= pos && pos < endPos
-
 def findInfoTreeAtPosition (trees : Array InfoTree) (fileMap : FileMap) (line col : Nat) : Option InfoTree :=
   let pos := fileMap.lspPosToUtf8Pos ⟨line, col⟩
-  trees.find? fun tree =>
-    tree.collectNodesBottomUp (fun _ info _ acc => Id.run do
-      if let .ofTacticInfo _ := info then
-        if let (some s, some e) := (info.pos?, info.tailPos?) then
-          if positionInRange pos s e then return true :: acc
-      return acc) |>.any id
+  trees.find? fun tree => tree.collectNodesBottomUp (fun _ info _ acc =>
+    match info with
+    | .ofTacticInfo _ =>
+      match info.pos?, info.tailPos? with
+      | some s, some e => if s <= pos && pos < e then true :: acc else acc
+      | _, _ => acc
+    | _ => acc) |>.any id
 
 /-! ## Single Tactic Mode -/
 
 private structure GoalsAtInternal where
   ctxInfo : ContextInfo
   tacticInfo : TacticInfo
-  useAfter : Bool
   indented : Bool
   priority : Nat
 
-structure StaticGoalsAtResult where
-  ctxInfo : ContextInfo
-  tacticInfo : TacticInfo
-
-partial def staticGoalsAt? (t : InfoTree) (fileMap : FileMap) (hoverPos : String.Pos.Raw) : List StaticGoalsAtResult :=
-  let gs : List GoalsAtInternal := t.collectNodesBottomUp fun ctx i cs gs => Id.run do
-    if let .ofTacticInfo ti := i then
-      if let (some pos, some tailPos) := (i.pos?, i.tailPos?) then
-        let trailSize := i.stx.getTrailingSize
-        let atEOF := tailPos.byteIdx + trailSize == fileMap.source.rawEndPos.byteIdx
-        if pos ≤ hoverPos ∧ (hoverPos.byteIdx < tailPos.byteIdx + max 1 trailSize || atEOF) then
-          let isClosingBracket := ti.stx.getAtomVal == "]"
-          if (gs.isEmpty || (hoverPos ≥ tailPos && gs.all (·.indented))) && !isClosingBracket then
-            return [{ ctxInfo := ctx, tacticInfo := ti
-                      useAfter := hoverPos > pos && !cs.any (hasNestedTactic pos tailPos)
-                      indented := (fileMap.toPosition pos).column > (fileMap.toPosition hoverPos).column && !isEmptyBy ti.stx
-                      priority := if hoverPos.byteIdx == tailPos.byteIdx + trailSize then 0 else 1 }]
-    return gs
-  let maxPrio? := gs.map (·.priority) |>.max?
-  gs.filter (some ·.priority == maxPrio?) |>.map fun r => ⟨r.ctxInfo, r.tacticInfo⟩
-where
-  hasNestedTactic (pos tailPos) : InfoTree → Bool
-    | .node i@(.ofTacticInfo _) cs => Id.run do
-      if let `(by $_) := i.stx then return false
-      if let (some pos', some tailPos') := (i.pos?, i.tailPos?) then
-        if tailPos' > hoverPos && (pos', tailPos') != (pos, tailPos) then return true
-      cs.any (hasNestedTactic pos tailPos)
-    | .node (.ofMacroExpansionInfo _) cs => cs.any (hasNestedTactic pos tailPos)
+partial def staticGoalsAt? (t : InfoTree) (fileMap : FileMap) (hoverPos : String.Pos.Raw) : Option (ContextInfo × TacticInfo) :=
+  let hasNestedTactic (cs : PersistentArray InfoTree) (pos tailPos : String.Pos.Raw) : Bool := cs.any fun
+    | .node j@(.ofTacticInfo _) _ =>
+      if let `(by $_) := j.stx then false
+      else match j.pos?, j.tailPos? with
+        | some p', some t' => t' > hoverPos && (p', t') != (pos, tailPos)
+        | _, _ => false
     | _ => false
-  isEmptyBy (stx : Syntax) : Bool :=
-    stx.getNumArgs == 2 && stx[0].isToken "by" && stx[1].getNumArgs == 1 && stx[1][0].isMissing
-
-partial def staticParseSingleTactic (infoTree : InfoTree) (ctx : ContextInfo) (info : Info) : MetaM Result := do
-  let .ofTacticInfo tInfo := info | return { steps := [], allGoals := ∅ }
-  let some tacticSubstring := getTacticSubstring tInfo | return { steps := [], allGoals := ∅ }
-
-  let tacticString := prettifyTacticString tacticSubstring.toString
-  let proofTreeEdges ← staticGetGoalsChange ctx tInfo
-  let currentGoals := proofTreeEdges.flatMap fun ⟨_, g₁, gs⟩ => g₁ :: gs
-  let allGoals := Std.HashSet.ofList currentGoals
-  let orphanedGoals := currentGoals.foldl Std.HashSet.erase (noInEdgeGoals allGoals [])
-    |>.toArray.insertionSort (nameNumLt ·.id.name ·.id.name) |>.toList
-
-  let theorems ← match ctx.mctx.findDecl? tInfo.goalsBefore.head!, getTacticSubstring tInfo with
-    | some goalDecl, some sub =>
-      ctx.runMetaM goalDecl.lctx (findTheoremsLikeHover infoTree sub.startPos sub.stopPos ctx goalDecl)
-    | _, _ => pure []
-
-  let newSteps := proofTreeEdges.map fun ⟨tacticDependsOn, goalBefore, goalsAfter⟩ =>
-    { tacticString, goalBefore, goalsAfter, tacticDependsOn
-      spawnedGoals := orphanedGoals, position := dummyPosition, theorems }
-  return { steps := newSteps, allGoals }
+  let isEmptyBy (stx : Syntax) := stx.getNumArgs == 2 && stx[0].isToken "by" && stx[1].getNumArgs == 1 && stx[1][0].isMissing
+  let gs : List GoalsAtInternal := t.collectNodesBottomUp fun ctx i cs gs => Id.run do
+    let .ofTacticInfo ti := i | return gs
+    let (some pos, some tailPos) := (i.pos?, i.tailPos?) | return gs
+    let trailSize := i.stx.getTrailingSize
+    let atEOF := tailPos.byteIdx + trailSize == fileMap.source.rawEndPos.byteIdx
+    if !(pos ≤ hoverPos ∧ (hoverPos.byteIdx < tailPos.byteIdx + max 1 trailSize || atEOF)) then return gs
+    if ti.stx.getAtomVal == "]" then return gs
+    let indented := (fileMap.toPosition pos).column > (fileMap.toPosition hoverPos).column
+    if !(gs.isEmpty || (hoverPos ≥ tailPos && gs.all (·.indented))) then return gs
+    if (hoverPos > pos && hasNestedTactic cs pos tailPos) || isEmptyBy i.stx then return gs
+    return [{ ctxInfo := ctx, tacticInfo := ti, indented, priority := if hoverPos.byteIdx == tailPos.byteIdx + trailSize then 0 else 1 }]
+  let maxPrio? := gs.map (·.priority) |>.max?
+  gs.filter (some ·.priority == maxPrio?) |>.head?.map fun r => (r.ctxInfo, r.tacticInfo)
 
 /-! ## JSON Output -/
 
@@ -251,73 +215,52 @@ structure ProcessedFile where
 /-- Load and process a Lean file, returning the processed state. -/
 unsafe def loadFile (filePath : System.FilePath) : IO (Except String ProcessedFile) := do
   Lean.initSearchPath (← Lean.findSysroot)
-  let input ← IO.FS.readFile filePath
   Lean.enableInitializersExecution
-
-  let inputCtx := Parser.mkInputContext input filePath.toString
+  let inputCtx := Parser.mkInputContext (← IO.FS.readFile filePath) filePath.toString
   let (header, parserState, messages) ← Parser.parseHeader inputCtx
   let (env, messages) ← Elab.processHeader header {} messages inputCtx
-
-  if messages.hasErrors then
-    return .error "Errors during import"
-
+  if messages.hasErrors then return .error "Errors during import"
   let env := env.setMainModule (← moduleNameOfFileName filePath none)
-  let commandState := { Command.mkState env messages {} with infoState.enabled := true }
   let (steps, _) ← (processAllCommands.run { inputCtx }).run
-    { commandState, parserState, cmdPos := parserState.pos }
-
-  let trees := steps.foldl (fun acc ⟨_, s⟩ => acc ++ s.trees.toArray) #[]
+    { commandState := { Command.mkState env messages {} with infoState.enabled := true }, parserState, cmdPos := parserState.pos }
   let some ⟨lastEnv, _⟩ := steps.getLast? | return .error "No commands processed"
-
-  return .ok { steps, trees, fileMap := inputCtx.fileMap, lastEnv, filePath }
+  return .ok { steps, trees := steps.foldl (fun acc ⟨_, s⟩ => acc ++ s.trees.toArray) #[], fileMap := inputCtx.fileMap, lastEnv, filePath }
 
 /-- Query proof data at a position from a processed file. -/
 unsafe def queryPosition (pf : ProcessedFile) (line col : Nat) (mode : TacticMode) : IO Json := do
-  let some tree := findInfoTreeAtPosition pf.trees pf.fileMap line col
-    | return errorJson "No proof found at position"
+  let some tree := findInfoTreeAtPosition pf.trees pf.fileMap line col | return errorJson "No proof found at position"
   let ctx : Core.Context := { fileName := pf.filePath.toString, fileMap := pf.fileMap, options := {} }
-
   match mode with
-  | .tree =>
-    match ← runInCoreM ctx pf.lastEnv (staticBetterParser tree) with
+  | .tree => match ← runInCoreM ctx pf.lastEnv (staticBetterParser tree) with
     | some r => return if r.steps.isEmpty then errorJson "zeroProofSteps" else resultToJson r
     | none => return errorJson "Failed to parse proof tree"
   | .singleTactic =>
-    let hoverPos := pf.fileMap.lspPosToUtf8Pos ⟨line, col⟩
-    let some goalsAt := (staticGoalsAt? tree pf.fileMap hoverPos).head?
+    let some (ctxInfo, tacticInfo) := staticGoalsAt? tree pf.fileMap (pf.fileMap.lspPosToUtf8Pos ⟨line, col⟩)
       | return errorJson "No tactic at position"
-    let info := Info.ofTacticInfo goalsAt.tacticInfo
-    let result ← runInCoreM ctx pf.lastEnv (staticParseSingleTactic tree goalsAt.ctxInfo info)
-    return resultToJson result
+    return resultToJson (← runInCoreM ctx pf.lastEnv (staticParseTacticCore tree ctxInfo tacticInfo []))
 
 /-! ## One-shot CLI Mode -/
 
+unsafe def processConstant (pf : ProcessedFile) (constName : Name) (outputPath : System.FilePath) : IO Unit := do
+  for ⟨env', s⟩ in pf.steps do
+    if env'.contains constName then
+      for tree in s.trees do
+        match ← runInCoreM { fileName := "", fileMap := default, options := {} } env' (staticBetterParser tree) with
+        | some r => IO.FS.writeFile outputPath (Json.pretty (toJson r))
+        | none => IO.eprintln "Failed to parse proof tree"
+      return
+
 unsafe def processFile (config : Config) : IO Unit := do
   let some filePath := config.filePath | throw <| IO.userError "File path required"
-
   match ← loadFile filePath with
-  | .error msg =>
-    match config.lookupMode with
+  | .error msg => match config.lookupMode with
     | .byPosition .. => IO.println <| Json.compress (errorJson msg)
     | .byName .. => throw <| IO.userError msg
     | .serve => pure ()
-  | .ok pf =>
-    match config.lookupMode with
+  | .ok pf => match config.lookupMode with
     | .byName constName outputPath => processConstant pf constName outputPath
-    | .byPosition line col mode =>
-      let result ← queryPosition pf line col mode
-      IO.println (Json.compress result)
+    | .byPosition line col mode => IO.println (Json.compress (← queryPosition pf line col mode))
     | .serve => pure ()
-where
-  processConstant (pf : ProcessedFile) (constName : Name) (outputPath : System.FilePath) : IO Unit := do
-    for ⟨env', s⟩ in pf.steps do
-      if env'.contains constName then
-        for tree in s.trees do
-          let ctx : Core.Context := { fileName := "", fileMap := default, options := {} }
-          match ← runInCoreM ctx env' (staticBetterParser tree) with
-          | some r => IO.FS.writeFile outputPath (Json.pretty (toJson r))
-          | none => IO.eprintln "Failed to parse proof tree"
-        return
 
 /-! ## JSON-RPC Server Mode -/
 
@@ -379,10 +322,8 @@ def writeResponse (stdout : IO.FS.Stream) (response : JsonRpcResponse) : IO Unit
 
 unsafe def handleRequest (method : String) (params : Json) : IO Json := do
   match method with
-  | "paperproof/getSnapshotData" =>
-    match FromJson.fromJson? params with
-    | .ok (p : GetSnapshotParams) =>
-      match ← loadFile ⟨p.file⟩ with
+  | "paperproof/getSnapshotData" => match FromJson.fromJson? params with
+    | .ok (p : GetSnapshotParams) => match ← loadFile ⟨p.file⟩ with
       | .ok pf => queryPosition pf p.line p.column (parseMode p.mode |>.getD .tree)
       | .error msg => return errorJson msg
     | .error e => return errorJson s!"Invalid params: {e}"
@@ -391,15 +332,12 @@ unsafe def handleRequest (method : String) (params : Json) : IO Json := do
   | _ => return errorJson s!"Unknown method: {method}"
 
 unsafe def runServer : IO Unit := do
-  let stdin ← IO.getStdin
-  let stdout ← IO.getStdout
-  loop stdin stdout
-where
-  loop (stdin stdout : IO.FS.Stream) : IO Unit := do
-    let request ← readMessage stdin
-    let result ← handleRequest request.method request.params
-    writeResponse stdout { id := request.id, result }
-    loop stdin stdout
+  let (stdin, stdout) := (← IO.getStdin, ← IO.getStdout)
+  let rec loop : IO Unit := do
+    let req ← readMessage stdin
+    writeResponse stdout { id := req.id, result := ← handleRequest req.method req.params }
+    loop
+  loop
 
 /-! ## Main Entry Point -/
 

@@ -2,7 +2,9 @@ import Tests.UnitProofDag
 import Tests.UnitProofState
 import Tests.RpcBasic
 import Tests.RpcProofDag
-import Tests.RpcEdgeCases
+import Tests.RpcBoundary
+import Tests.RpcTactics
+import Tests.RpcUnicode
 
 unsafe def main : IO Unit := do
   IO.println "LeanAnalyzer Tests"
@@ -14,6 +16,8 @@ unsafe def main : IO Unit := do
   -- RPC integration tests (require lean-analyzer binary)
   Tests.RpcBasic.runTests
   Tests.RpcProofDag.runTests
-  Tests.RpcEdgeCases.runTests
+  Tests.RpcBoundary.runTests
+  Tests.RpcTactics.runTests
+  Tests.RpcUnicode.runTests
 
   IO.println "\nAll tests passed"

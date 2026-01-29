@@ -109,9 +109,14 @@ def buildProofDag (steps : List ParsedStep) : ProofDag :=
       children := childrenOf[idx]?.getD []
       parent := parentOf[idx]?.join
       depth := depths[idx]?.getD 0 }
-  -- Root is the first step with no parent
-  let root := nodes.findIdx? (·.parent.isNone)
-  { nodes, root, currentNode := some (nodes.size - 1), initialState := nodes[0]!.stateBefore }
+  -- Find all nodes with no parent (potential roots/orphans)
+  let rootCandidates := nodes.toList.filterMap fun n =>
+    if n.parent.isNone then some n.id else none
+  -- First rootless node is the main root, rest are orphans (disconnected components)
+  let (root, orphans) := match rootCandidates with
+    | [] => (none, [])
+    | r :: rest => (some r, rest)
+  { nodes, root, orphans, currentNode := some (nodes.size - 1), initialState := nodes[0]!.stateBefore }
 
 /-! ## RPC Handler -/
 

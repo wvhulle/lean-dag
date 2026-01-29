@@ -1,9 +1,10 @@
 import Lean
 import Lean.Data.Lsp.Ipc
+import LeanAnalyzer
 
 namespace Tests.LspClient
 
-open Lean Lsp Ipc JsonRpc IO
+open Lean Lsp Ipc JsonRpc IO LeanAnalyzer
 
 /-!
 ## Position Convention
@@ -18,7 +19,7 @@ LSP uses UTF-16 code units for columns, which matters for unicode characters.
 /-- Convert 1-indexed editor position to 0-indexed LSP position -/
 def editorToLsp (line col : Nat) : (Nat × Nat) := (line - 1, col - 1)
 
-def testProjectPath : System.FilePath := "Demos/test-project"
+def testProjectPath : System.FilePath := "Demo"
 
 def fileUri (path : System.FilePath) : IO String := do
   let cwd ← IO.currentDir
@@ -102,5 +103,17 @@ def runWithLeanAnalyzer (action : IpcM α) : IO α := do
   let projectDir := cwd / testProjectPath
   Ipc.runWith "sh" #["-c",
     s!"cd {projectDir} && unset LEAN_PATH LEAN_SYSROOT && exec lake env sh -c 'LEAN_WORKER_PATH={serverPath} exec {serverPath}'"] action
+
+def parseProofDag (json : Json) : Except String ProofDag :=
+  match json.getObjVal? "proofDag" with
+  | .ok dagJson => FromJson.fromJson? dagJson
+  | .error e => .error s!"Missing proofDag field: {e}"
+
+/-- Get proof DAG at position. Line/col are 1-indexed (editor style). -/
+def getProofDagAt (uri : String) (sessionId : UInt64) (line col : Nat) (requestId : Nat) : IpcM (Option ProofDag) := do
+  let result ← callRpc requestId sessionId uri line col "LeanAnalyzer.getProofDag" (Json.mkObj [("mode", "tree")])
+  match parseProofDag result with
+  | .ok dag => return some dag
+  | .error _ => return none
 
 end Tests.LspClient

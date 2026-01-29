@@ -58,7 +58,46 @@ def convertHypothesis (h : ParsedHypothesis) : HypothesisInfo where
 
 def buildProofDag (steps : List ParsedStep) : ProofDag :=
   if steps.isEmpty then {} else
-  let nodes := steps.toArray.mapIdx fun idx step =>
+  let stepsArray := steps.toArray
+  -- Build goal ID to step index map: which step produces which goals
+  -- goalsAfter are the goals that result from applying the tactic
+  let goalToProducer : Std.HashMap String Nat := Id.run do
+    let mut m : Std.HashMap String Nat := {}
+    for h : idx in [:stepsArray.size] do
+      let step := stepsArray[idx]
+      for goal in step.goalsAfter do
+        m := m.insert goal.id.name.toString idx
+    return m
+  -- For each step, find parent (the step whose goalsAfter contains this step's goalBefore)
+  let parentOf : Array (Option Nat) := stepsArray.map fun step =>
+    goalToProducer.get? step.goalBefore.id.name.toString
+  -- Compute children from parent relationships
+  let childrenOf : Array (List Nat) := Id.run do
+    let mut result : Array (List Nat) := stepsArray.map (fun _ => [])
+    for h : childIdx in [:parentOf.size] do
+      if let some parentIdx := parentOf[childIdx] then
+        if parentIdx < result.size then
+          result := result.modify parentIdx (childIdx :: ·)
+    return result
+  -- Compute depth: count steps to root
+  let depths : Array Nat := Id.run do
+    let mut result := stepsArray.map (fun _ => 0)
+    for h : idx in [:stepsArray.size] do
+      let mut depth := 0
+      let mut current := idx
+      let mut visited : Std.HashSet Nat := {}
+      while true do
+        if visited.contains current then break
+        visited := visited.insert current
+        match parentOf[current]? with
+        | some (some p) =>
+          depth := depth + 1
+          current := p
+        | _ => break
+      result := result.set! idx depth
+    return result
+  -- Build nodes with computed relationships
+  let nodes := stepsArray.mapIdx fun idx step =>
     let goalBefore := convertGoalInfo step.goalBefore
     let goalsAfter := step.goalsAfter.map convertGoalInfo
     let hyps := step.goalBefore.hyps.map convertHypothesis |>.filter (·.name != "")
@@ -67,8 +106,12 @@ def buildProofDag (steps : List ParsedStep) : ProofDag :=
       position := step.position.start
       stateBefore := { goals := [goalBefore], hypotheses := hyps }
       stateAfter := { goals := goalsAfter, hypotheses := hyps }
-      children := [], parent := none, depth := 0 }
-  { nodes, root := some 0, currentNode := some (nodes.size - 1), initialState := nodes[0]!.stateBefore }
+      children := childrenOf[idx]?.getD []
+      parent := parentOf[idx]?.join
+      depth := depths[idx]?.getD 0 }
+  -- Root is the first step with no parent
+  let root := nodes.findIdx? (·.parent.isNone)
+  { nodes, root, currentNode := some (nodes.size - 1), initialState := nodes[0]!.stateBefore }
 
 /-! ## RPC Handler -/
 

@@ -109,8 +109,8 @@ unsafe def testHover : IO Unit := do
     openDocument uri content
     waitForFileReady uri
 
-    -- Try hover at position (0, 10) - should be on "simple_rfl"
-    let hover ← hoverRequest 2 uri 0 10
+    -- Try hover at position (1, 11) - should be on "simple_rfl" (1-indexed)
+    let hover ← hoverRequest 2 uri 1 11
     match hover with
     | some h => IO.println s!"  ✓ hover result: {h.contents.value.take 100}..."
     | none => IO.println s!"  ✗ hover returned none at (0, 10)"
@@ -142,8 +142,8 @@ unsafe def testGetProofDagRpc : IO Unit := do
 
     let sessionId ← connectRpcSession 2 uri
 
-    -- Call LeanAnalyzer.getProofDag at line 0 (only line in Simple.lean)
-    let result ← callRpc 3 sessionId uri 0 10 "LeanAnalyzer.getProofDag" (Json.mkObj [("mode", "tree")])
+    -- Call LeanAnalyzer.getProofDag at line 1, col 11 (1-indexed, on "simple_rfl")
+    let result ← callRpc 3 sessionId uri 1 11 "LeanAnalyzer.getProofDag" (Json.mkObj [("mode", "tree")])
     IO.println s!"  ✓ LeanAnalyzer.getProofDag called"
     IO.println s!"  Result (first 500 chars): {result.compress.take 500}"
 

@@ -1,6 +1,5 @@
 import Lean
 import Lean.Data.Lsp.Ipc
-import Std.Internal.UV.System
 
 namespace Tests.LspClient
 
@@ -84,9 +83,7 @@ def runWithLeanAnalyzer (action : IpcM α) : IO α := do
   let cwd ← IO.currentDir
   let serverPath ← leanAnalyzerPath
   let projectDir := cwd / testProjectPath
-  -- Run lean-analyzer with Lake's environment from test-project
-  -- Clear LEAN_PATH/LEAN_SYSROOT first, then let lake env set them correctly
-  -- Set LEAN_WORKER_PATH inside lake env so workers use our custom binary
-  Ipc.runWith "sh" #["-c", s!"cd {projectDir} && unset LEAN_PATH LEAN_SYSROOT && exec lake env sh -c 'LEAN_WORKER_PATH={serverPath} exec {serverPath}'"] action
+  Ipc.runWith "sh" #["-c",
+    s!"cd {projectDir} && unset LEAN_PATH LEAN_SYSROOT && exec lake env sh -c 'LEAN_WORKER_PATH={serverPath} exec {serverPath}'"] action
 
 end Tests.LspClient

@@ -1,6 +1,6 @@
 import Lean
 
-namespace Tests.Helpers
+namespace Tests.Harness
 
 def assertEqual [BEq α] [ToString α] (name : String) (actual expected : α) : IO Unit := do
   if actual == expected then
@@ -54,4 +54,4 @@ def printSection (title : String) : IO Unit := do
 def printSubsection (title : String) : IO Unit := do
   IO.println s!"\n  [{title}]"
 
-end Tests.Helpers
+end Tests.Harness

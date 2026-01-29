@@ -1,10 +1,10 @@
 import Lean
 import LeanAnalyzer
-import Tests.Helpers
+import Tests.Harness
 
-namespace Tests.ProofStateChanges
+namespace Tests.UnitProofState
 
-open Lean LeanAnalyzer Tests.Helpers
+open Lean LeanAnalyzer Tests.Harness
 
 /-! ## Hypothesis Tracking Tests -/
 
@@ -208,7 +208,7 @@ def testHygienicNameFiltering : IO Unit := do
 
 def runTests : IO Unit := do
   IO.println "\n══════════════════════════════════════════════════════════════"
-  IO.println "  Proof State Change Tests"
+  IO.println "  ProofState Change Tests (Unit)"
   IO.println "══════════════════════════════════════════════════════════════"
   
   testNewHypothesesTracking
@@ -221,6 +221,6 @@ def runTests : IO Unit := do
   testHypothesisKinds
   testHygienicNameFiltering
   
-  IO.println "\n  ✓ Proof state change tests passed"
+  IO.println "\n  ✓ ProofState unit tests passed"
 
-end Tests.ProofStateChanges
+end Tests.UnitProofState

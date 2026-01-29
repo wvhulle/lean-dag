@@ -2,11 +2,11 @@ import Lean
 import Lean.Data.Lsp.Ipc
 import LeanAnalyzer
 import Tests.LspClient
-import Tests.Helpers
+import Tests.Harness
 
-namespace Tests.LspEdgeCases
+namespace Tests.RpcEdgeCases
 
-open Lean Lsp Ipc JsonRpc LeanAnalyzer Tests.LspClient Tests.Helpers
+open Lean Lsp Ipc JsonRpc LeanAnalyzer Tests.LspClient Tests.Harness
 
 def edgeCaseFile : System.FilePath := testProjectPath / "EdgeCases.lean"
 def unicodeFile : System.FilePath := testProjectPath / "Unicode.lean"
@@ -519,7 +519,7 @@ unsafe def testSubscriptCharacters : IO Unit := do
 unsafe def runTests : IO Unit := do
   IO.println ""
   IO.println "══════════════════════════════════════════════════════════════"
-  IO.println "  LSP Edge Case Tests"
+  IO.println "  RPC Edge Case Tests"
   IO.println "══════════════════════════════════════════════════════════════"
 
   testTermModeProof
@@ -535,6 +535,6 @@ unsafe def runTests : IO Unit := do
   testUnicodeColumnPosition
   testSubscriptCharacters
 
-  IO.println "\n  ✓ LSP edge case tests passed"
+  IO.println "\n  ✓ RPC edge case tests passed"
 
-end Tests.LspEdgeCases
+end Tests.RpcEdgeCases

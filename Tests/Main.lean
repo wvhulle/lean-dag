@@ -1,14 +1,19 @@
-import Tests.SemanticTableau
-import Tests.ProofStateChanges
-import Tests.LspIntegration
-import Tests.SemanticTableauRpc
-import Tests.LspEdgeCases
+import Tests.UnitProofDag
+import Tests.UnitProofState
+import Tests.RpcBasic
+import Tests.RpcProofDag
+import Tests.RpcEdgeCases
 
 unsafe def main : IO Unit := do
-  IO.println "LeanAnalyzer Feature Tests"
-  Tests.SemanticTableau.runTests
-  Tests.ProofStateChanges.runTests
-  Tests.LspIntegration.runTests
-  Tests.SemanticTableauRpc.runTests
-  Tests.LspEdgeCases.runTests
+  IO.println "LeanAnalyzer Tests"
+
+  -- Unit tests (no external dependencies)
+  Tests.UnitProofDag.runTests
+  Tests.UnitProofState.runTests
+
+  -- RPC integration tests (require lean-analyzer binary)
+  Tests.RpcBasic.runTests
+  Tests.RpcProofDag.runTests
+  Tests.RpcEdgeCases.runTests
+
   IO.println "\nAll tests passed"

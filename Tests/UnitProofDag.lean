@@ -1,10 +1,10 @@
 import Lean
 import LeanAnalyzer
-import Tests.Helpers
+import Tests.Harness
 
-namespace Tests.SemanticTableau
+namespace Tests.UnitProofDag
 
-open Lean LeanAnalyzer Tests.Helpers
+open Lean LeanAnalyzer Tests.Harness
 
 /-! ## DAG Structure Tests -/
 
@@ -224,7 +224,7 @@ def testCurrentNodeTracking : IO Unit := do
 
 def runTests : IO Unit := do
   IO.println "\n══════════════════════════════════════════════════════════════"
-  IO.println "  Semantic Tableau Structure Tests"
+  IO.println "  ProofDag Structure Tests (Unit)"
   IO.println "══════════════════════════════════════════════════════════════"
   
   testEmptyProofDag
@@ -234,6 +234,6 @@ def runTests : IO Unit := do
   testOrphanNodes
   testCurrentNodeTracking
   
-  IO.println "\n  ✓ Semantic tableau tests passed"
+  IO.println "\n  ✓ ProofDag unit tests passed"
 
-end Tests.SemanticTableau
+end Tests.UnitProofDag

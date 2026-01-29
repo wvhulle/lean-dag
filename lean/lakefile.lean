@@ -7,3 +7,8 @@ package Paperproof
 lean_lib Paperproof
 
 lean_lib Services
+
+/-- CLI tool for extracting proof structures. Used by VS Code extension as fallback. -/
+lean_exe «paperproof-cli» where
+  root := `terminal
+  supportInterpreter := true

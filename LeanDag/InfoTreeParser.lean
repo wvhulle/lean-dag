@@ -266,24 +266,48 @@ def tryResolveConstLocation (name : Name) : MetaM (Option LeanDag.GotoLocation) 
   let r := ranges.selectionRange
   return some { uri := modUri, position := ⟨r.pos.line - 1, r.charUtf16⟩ }
 
-/-- Find the first constant in an expression that resolves to a URI.
-    Walks the expression tree depth-first until it finds a resolvable constant. -/
-partial def findFirstResolvableConst (type : Expr) : MetaM (Option Name) := do
+/-- Find the first resolvable constant in an expression.
+    Prioritizes term arguments over type arguments:
+    1. Check the head constant (e.g., Eq, And, Inter.inter)
+    2. Check term arguments (from end of arg list, as type args come first)
+    3. Fall back to type arguments if no term arg resolves -/
+partial def findFirstResolvableConst (type : Expr) (depth : Nat := 0) : MetaM (Option Name) := do
+  let indent := String.mk (List.replicate (depth * 2) ' ')
   let type := type.consumeMData
+  IO.eprintln s!"{indent}[findConst] expr kind={type.ctorName}"
   match type with
   | .const n _ =>
-    if let some _ ← tryResolveConstLocation n then
-      return some n
+    let resolved ← tryResolveConstLocation n
+    IO.eprintln s!"{indent}[findConst] const {n} resolvable={resolved.isSome}"
+    if resolved.isSome then return some n else return none
+  | .app .. =>
+    let fn := type.getAppFn.consumeMData
+    let args := type.getAppArgs
+    IO.eprintln s!"{indent}[findConst] app head={fn.ctorName} numArgs={args.size}"
+    -- First try the head constant
+    if let .const n _ := fn then
+      let resolved ← tryResolveConstLocation n
+      IO.eprintln s!"{indent}[findConst] head const {n} resolvable={resolved.isSome}"
+      if resolved.isSome then return some n
+    -- Then try arguments in reverse order (term args are typically at the end)
+    for i in [:args.size] do
+      let arg := args[args.size - 1 - i]!
+      IO.eprintln s!"{indent}[findConst] trying arg {i} (reverse)"
+      if let some n ← findFirstResolvableConst arg (depth + 1) then
+        return some n
+    -- Fall back to checking the function if it's not a simple constant
+    if !fn.isConst then
+      findFirstResolvableConst fn (depth + 1)
     else
       return none
-  | .app fn arg =>
-    if let some n ← findFirstResolvableConst fn then return some n
-    findFirstResolvableConst arg
   | .forallE _ dom body _ =>
-    if let some n ← findFirstResolvableConst dom then return some n
-    findFirstResolvableConst body
-  | .mdata _ e => findFirstResolvableConst e
-  | _ => return none
+    IO.eprintln s!"{indent}[findConst] forallE"
+    if let some n ← findFirstResolvableConst body (depth + 1) then return some n
+    findFirstResolvableConst dom (depth + 1)
+  | .mdata _ e => findFirstResolvableConst e depth
+  | _ =>
+    IO.eprintln s!"{indent}[findConst] unhandled expr kind"
+    return none
 
 /-- Find the first free variable in an expression and return its type's first resolvable constant. -/
 def findFirstVarTypeConst (type : Expr) (lctx : LocalContext) : MetaM (Option Name) := do
@@ -306,18 +330,24 @@ def formatGoal (ctx : ContextInfo) (id : MVarId) (infoTree : InfoTree) (text : F
     let type := (← ppExprWithInfos ppCtx hypDecl.type).fmt.pretty
     let value ← hypDecl.value?.mapM fun v => do pure (← ppExprWithInfos ppCtx v).fmt.pretty
     let isProof ← ctx.runMetaM decl.lctx (exprKind hypDecl.toExpr)
-    -- Resolve goto location for the hypothesis (binder location)
-    let binderLoc := findBinderLocation infoTree hypDecl.fvarId text
-    IO.eprintln s!"[goto] hyp {hypDecl.userName}: binderLoc={binderLoc.isSome}"
-    let typeDef ← ctx.runMetaM decl.lctx do
-      let typeConstName := getTypeConstName hypDecl.type
-      IO.eprintln s!"[goto] hyp {hypDecl.userName}: typeConstName={typeConstName}"
-      match typeConstName with
+    -- Resolve goto locations for the hypothesis:
+    -- 'd' (definition): find first resolvable constant in the hypothesis type
+    -- 't' (typeDef): find the type of the first variable in the hypothesis type
+    let hypDefinition ← ctx.runMetaM decl.lctx do
+      let name? ← findFirstResolvableConst hypDecl.type
+      IO.eprintln s!"[goto] hyp {hypDecl.userName} definition: firstResolvableConst={name?}"
+      match name? with
+      | some name => resolveConstLocation name
+      | none => pure none
+    let hypTypeDef ← ctx.runMetaM decl.lctx do
+      let name? ← findFirstVarTypeConst hypDecl.type decl.lctx
+      IO.eprintln s!"[goto] hyp {hypDecl.userName} typeDef: firstVarTypeConst={name?}"
+      match name? with
       | some name => resolveConstLocation name
       | none => pure none
     let gotoLocations : LeanDag.GotoLocations := {
-      definition := binderLoc.map fun loc => { loc with uri := fileUri }
-      typeDef := typeDef
+      definition := hypDefinition
+      typeDef := hypTypeDef
     }
     IO.eprintln s!"[goto] hyp {hypDecl.userName}: def={gotoLocations.definition.isSome}, typeDef={gotoLocations.typeDef.isSome}"
     return { username := hypDecl.userName.toString, type, value, id := hypDecl.fvarId.name.toString, isProof, gotoLocations } :: acc

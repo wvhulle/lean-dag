@@ -10,6 +10,7 @@ lean_lib «LeanDag» where
 lean_lib «Tests» where
   globs := #[.submodules `Tests]
 
+@[default_target]
 lean_exe «lean-dag» where
   root := `Main
   supportInterpreter := true

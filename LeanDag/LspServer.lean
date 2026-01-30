@@ -63,6 +63,7 @@ def convertGoalInfo (g : ParsedGoal) : GoalInfo where
   type := .plain g.type
   username := filterNameOpt g.username
   id := g.id.name.toString
+  gotoLocations := g.gotoLocations
 
 def convertHypothesis (h : ParsedHypothesis) : HypothesisInfo where
   name := filterName h.username
@@ -71,6 +72,7 @@ def convertHypothesis (h : ParsedHypothesis) : HypothesisInfo where
   id := h.id
   isProof := h.isProof == "proof"
   isInstance := false
+  gotoLocations := h.gotoLocations
 
 /-! ## Diff Computation -/
 

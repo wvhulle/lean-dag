@@ -1,14 +1,15 @@
 import Lean
 import Lean.Meta.Basic
 import Lean.Meta.CollectMVars
+import LeanDag.Types
 
-open Lean Elab Server
+open Lean Elab Server Lean.Elab
 
 namespace LeanDag.InfoTreeParser
 
 /-! ## Tactic Substring Extraction -/
 
-def getTacticSubstring (tInfo : TacticInfo) : Option Substring.Raw :=
+def getTacticSubstring (tInfo : Elab.TacticInfo) : Option Substring.Raw :=
   tInfo.stx.getSubstring?.join
 
 /-! ## Goals At Position -/
@@ -133,7 +134,7 @@ def findTheoremsInRange (tree : InfoTree) (startPos stopPos : String.Pos.Raw) (c
   theoremNames.toList.filterMapM fun name => do
     formatDeclaration (← resolveGlobalConstNoOverloadCore name) ctx goalDecl
 
-def getTheorems (infoTree : InfoTree) (tacticInfo : TacticInfo) (ctx : ContextInfo) : RequestM (List TheoremSignature) := do
+def getTheorems (infoTree : InfoTree) (tacticInfo : Elab.TacticInfo) (ctx : ContextInfo) : RequestM (List TheoremSignature) := do
   let some goalDecl := ctx.mctx.findDecl? tacticInfo.goalsBefore.head!
     | throwThe RequestError ⟨.invalidParams, "noGoalDecl"⟩
   let some sub := getTacticSubstring tacticInfo
@@ -149,6 +150,7 @@ structure ParsedHypothesis where
   value    : Option String
   id       : String
   isProof  : String
+  gotoLocations : LeanDag.GotoLocations := {}
   deriving Inhabited, ToJson, FromJson
 
 structure ParsedGoal where
@@ -156,6 +158,7 @@ structure ParsedGoal where
   type     : String
   hyps     : List ParsedHypothesis
   id       : MVarId
+  gotoLocations : LeanDag.GotoLocations := {}
   deriving Inhabited, ToJson, FromJson
 
 instance : BEq ParsedGoal where beq g1 g2 := g1.id == g2.id
@@ -198,7 +201,62 @@ def exprKind (expr : Expr) : MetaM String := do
   if (← Meta.inferType expr).isSort then return "universe"
   return "data"
 
-def formatGoal (ctx : ContextInfo) (id : MVarId) : RequestM ParsedGoal := do
+/-! ## Goto Location Resolution -/
+
+/-- Find the binder location for a free variable in the InfoTree.
+    Returns the source position where the variable was introduced. -/
+def findBinderLocation (infoTree : InfoTree) (fvarId : FVarId) (text : FileMap) : Option LeanDag.GotoLocation :=
+  let binderInfo? := infoTree.findInfo? fun
+    | .ofTermInfo { isBinder := true, expr := .fvar id .., .. } => id == fvarId
+    | _ => false
+  binderInfo?.bind fun info =>
+    info.range?.map fun range =>
+      let lspPos := text.utf8PosToLspPos range.start
+      { uri := "", position := lspPos }  -- URI will be filled in by caller
+
+/-- Debug version that logs what it's doing. -/
+def findBinderLocationDebug (infoTree : InfoTree) (fvarId : FVarId) (text : FileMap) : IO (Option LeanDag.GotoLocation) := do
+  IO.eprintln s!"[goto] Looking for binder of fvarId={fvarId.name}"
+  let result := findBinderLocation infoTree fvarId text
+  IO.eprintln s!"[goto] Binder location result: {result.isSome}"
+  return result
+
+/-- Get the primary constant name from a type expression for goto definition. -/
+partial def getTypeConstName (type : Expr) : Option Name :=
+  let type := type.consumeMData
+  match type with
+  | .const n _ => some n
+  | .app fn _ => getTypeConstName fn
+  | .forallE _ _ body _ => getTypeConstName body
+  | .mdata _ e => getTypeConstName e
+  | _ => none
+
+/-- Resolve the definition location of a constant.
+    Returns the source file URI and position. -/
+def resolveConstLocation (name : Name) : MetaM (Option LeanDag.GotoLocation) := do
+  IO.eprintln s!"[goto] resolveConstLocation: name={name}"
+  let env ← getEnv
+  if !env.contains name then
+    IO.eprintln s!"[goto] resolveConstLocation: {name} not in env"
+    return none
+  let some ranges ← findDeclarationRanges? name |
+    IO.eprintln s!"[goto] resolveConstLocation: no ranges for {name}"
+    return none
+  let some modName ← findModuleOf? name |
+    IO.eprintln s!"[goto] resolveConstLocation: no module for {name}"
+    return none
+  let some modUri ← Server.documentUriFromModule? modName |
+    IO.eprintln s!"[goto] resolveConstLocation: no URI for module {modName}"
+    return none
+  let r := ranges.selectionRange
+  IO.eprintln s!"[goto] resolveConstLocation: resolved {name} to {modUri} @ {r.pos.line - 1}:{r.charUtf16}"
+  return some {
+    uri := modUri
+    position := ⟨r.pos.line - 1, r.charUtf16⟩
+  }
+
+def formatGoal (ctx : ContextInfo) (id : MVarId) (infoTree : InfoTree) (text : FileMap) (fileUri : String) : RequestM ParsedGoal := do
+  IO.eprintln s!"[goto] formatGoal: id={id.name}, fileUri={fileUri}"
   let some decl := ctx.mctx.findDecl? id
     | throwThe RequestError ⟨.invalidParams, "goalNotFoundInMctx"⟩
   let lctx := decl.lctx.sanitizeNames.run' {options := {}}
@@ -208,15 +266,45 @@ def formatGoal (ctx : ContextInfo) (id : MVarId) : RequestM ParsedGoal := do
     let type := (← ppExprWithInfos ppCtx hypDecl.type).fmt.pretty
     let value ← hypDecl.value?.mapM fun v => do pure (← ppExprWithInfos ppCtx v).fmt.pretty
     let isProof ← ctx.runMetaM decl.lctx (exprKind hypDecl.toExpr)
-    return { username := hypDecl.userName.toString, type, value, id := hypDecl.fvarId.name.toString, isProof } :: acc
+    -- Resolve goto location for the hypothesis (binder location)
+    let binderLoc := findBinderLocation infoTree hypDecl.fvarId text
+    IO.eprintln s!"[goto] hyp {hypDecl.userName}: binderLoc={binderLoc.isSome}"
+    let typeDef ← ctx.runMetaM decl.lctx do
+      let typeConstName := getTypeConstName hypDecl.type
+      IO.eprintln s!"[goto] hyp {hypDecl.userName}: typeConstName={typeConstName}"
+      match typeConstName with
+      | some name => resolveConstLocation name
+      | none => pure none
+    let gotoLocations : LeanDag.GotoLocations := {
+      definition := binderLoc.map fun loc => { loc with uri := fileUri }
+      typeDef := typeDef
+    }
+    IO.eprintln s!"[goto] hyp {hypDecl.userName}: def={gotoLocations.definition.isSome}, typeDef={gotoLocations.typeDef.isSome}"
+    return { username := hypDecl.userName.toString, type, value, id := hypDecl.fvarId.name.toString, isProof, gotoLocations } :: acc
   let type := (← ppExprWithInfos ppCtx decl.type).fmt.pretty
-  return { username := decl.userName.toString, type, hyps, id }
+  -- Resolve goto location for the goal type
+  let goalTypeConstName ← ctx.runMetaM decl.lctx do
+    let name := getTypeConstName decl.type
+    IO.eprintln s!"[goto] goal: typeConstName={name}"
+    return name
+  let goalGotoLocations : LeanDag.GotoLocations := {
+    definition := ← ctx.runMetaM decl.lctx do
+      match goalTypeConstName with
+      | some name => resolveConstLocation name
+      | none => pure none
+    typeDef := none
+  }
+  IO.eprintln s!"[goto] goal: def={goalGotoLocations.definition.isSome}"
+  return { username := decl.userName.toString, type, hyps, id, gotoLocations := goalGotoLocations }
 
 def filterUnassignedGoals (goals : List MVarId) (mctx : MetavarContext) : List MVarId :=
   goals.filter fun id =>
     (mctx.findDecl? id).isSome && !mctx.eAssignment.contains id && !mctx.dAssignment.contains id
 
-def computeGoalChanges (ctx : ContextInfo) (tInfo : TacticInfo) : RequestM (List (List String × ParsedGoal × List ParsedGoal)) := do
+def computeGoalChanges (ctx : ContextInfo) (tInfo : Elab.TacticInfo) (infoTree : InfoTree) : RequestM (List (List String × ParsedGoal × List ParsedGoal)) := do
+  let doc ← RequestM.readDoc
+  let text := doc.meta.text
+  let fileUri := doc.meta.uri
   let goalMVars := tInfo.goalsBefore ++ tInfo.goalsAfter
   let ppCtx := { ctx with mctx := tInfo.mctxAfter }
   let goalsBefore := filterUnassignedGoals goalMVars tInfo.mctxBefore
@@ -228,8 +316,8 @@ def computeGoalChanges (ctx : ContextInfo) (tInfo : TacticInfo) : RequestM (List
     let some goalDecl := tInfo.mctxBefore.findDecl? goalBefore | return none
     let assignedMVars ← ctx.runMetaM goalDecl.lctx (findAssignedMVars goalBefore tInfo.mctxAfter)
     let tacticDependsOn ← ctx.runMetaM goalDecl.lctx (findUsedHypotheses goalBefore goalDecl tInfo.mctxAfter)
-    let formattedBefore ← formatGoal ppCtx goalBefore
-    let formattedAfter ← (uniqueAfter.filter assignedMVars.contains).mapM (formatGoal ppCtx)
+    let formattedBefore ← formatGoal ppCtx goalBefore infoTree text fileUri
+    let formattedAfter ← (uniqueAfter.filter assignedMVars.contains).mapM fun id => formatGoal ppCtx id infoTree text fileUri
     return some (tacticDependsOn, formattedBefore, formattedAfter)
 
 def formatRewriteSteps (stx : Syntax) (steps : List ParsedStep) : List ParsedStep :=
@@ -263,7 +351,7 @@ partial def parseTacticInfo (infoTree : InfoTree) (ctx : ContextInfo) (info : In
   let tacticString := if forcedTacticString.isEmpty then formatTacticString sub.toString else forcedTacticString
   let steps := formatRewriteSteps tInfo.stx steps
   let position ← getSourceRange sub
-  let edges ← computeGoalChanges ctx tInfo
+  let edges ← computeGoalChanges ctx tInfo infoTree
   let currentGoals := edges.flatMap fun (_, g, gs) => g :: gs
   let allGoals := allGoals.insertMany currentGoals
   let stepGoals := steps.flatMap fun s => s.goalsAfter ++ s.spawnedGoals

@@ -2,7 +2,7 @@ import Lean
 
 open Lean
 
-namespace LeanAnalyzer
+namespace LeanDag
 
 /-! ## Navigation Types -/
 
@@ -115,4 +115,4 @@ instance : BEq ProofDagNode where
 instance : BEq ProofDag where
   beq a b := a.nodes.toList == b.nodes.toList && a.root == b.root && a.orphans == b.orphans
 
-end LeanAnalyzer
+end LeanDag

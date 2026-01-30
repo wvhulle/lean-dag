@@ -1,12 +1,12 @@
 import Lean
 import Lean.Data.Lsp.Ipc
-import LeanAnalyzer
+import LeanDag
 import Tests.LspClient
 import Tests.Harness
 
 namespace Tests.RpcProofDag
 
-open Lean Lsp Ipc JsonRpc LeanAnalyzer Tests.LspClient Tests.Harness
+open Lean Lsp Ipc JsonRpc LeanDag Tests.LspClient Tests.Harness
 
 def logicFile : System.FilePath := testProjectPath / "Logic.lean"
 def inductionFile : System.FilePath := testProjectPath / "Induction.lean"
@@ -18,7 +18,7 @@ def parseProofDag (json : Json) : Except String ProofDag :=
 
 /-- Get proof DAG at position. Line/col are 1-indexed (editor style). -/
 def getProofDagAt (uri : String) (sessionId : UInt64) (line col : Nat) (requestId : Nat) : IpcM ProofDag := do
-  let result ← callRpc requestId sessionId uri line col "LeanAnalyzer.getProofDag" (Json.mkObj [("mode", "tree")])
+  let result ← callRpc requestId sessionId uri line col "LeanDag.getProofDag" (Json.mkObj [("mode", "tree")])
   match parseProofDag result with
   | .ok dag => return dag
   | .error e => throw <| IO.userError s!"Failed to parse ProofDag: {e}"
@@ -26,16 +26,11 @@ def getProofDagAt (uri : String) (sessionId : UInt64) (line col : Nat) (requestI
 unsafe def testLinearProofStructure : IO Unit := do
   printSubsection "Linear Proof - contrapositive"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "linear proof" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile logicFile
 
-  unless ← logicFile.pathExists do
-    skipTest "linear proof" "Logic.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile logicFile
@@ -88,16 +83,11 @@ unsafe def testLinearProofStructure : IO Unit := do
 unsafe def testBranchingProofStructure : IO Unit := do
   printSubsection "Branching Proof - or_assoc_logic"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "branching proof" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile logicFile
 
-  unless ← logicFile.pathExists do
-    skipTest "branching proof" "Logic.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile logicFile
@@ -131,16 +121,11 @@ unsafe def testBranchingProofStructure : IO Unit := do
 unsafe def testInductionProofStructure : IO Unit := do
   printSubsection "Induction Proof - nat_add_zero"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "induction proof" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile inductionFile
 
-  unless ← inductionFile.pathExists do
-    skipTest "induction proof" "Induction.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile inductionFile
@@ -170,16 +155,11 @@ unsafe def testInductionProofStructure : IO Unit := do
 unsafe def testGotoLocationsField : IO Unit := do
   printSubsection "GotoLocations Field Present"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "gotoLocations" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile logicFile
 
-  unless ← logicFile.pathExists do
-    skipTest "gotoLocations" "Logic.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile logicFile
@@ -213,17 +193,13 @@ unsafe def testGotoLocationsField : IO Unit := do
 unsafe def testUsernameFiltering : IO Unit := do
   printSubsection "Username Filtering"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "username filtering" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
 
   let simpleFile := testProjectPath / "Simple.lean"
-  unless ← simpleFile.pathExists do
-    skipTest "username filtering" "Simple.lean not found"
-    return
+  requireFile simpleFile
 
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile simpleFile
@@ -250,16 +226,11 @@ unsafe def testUsernameFiltering : IO Unit := do
 unsafe def testNewHypothesesIndices : IO Unit := do
   printSubsection "New Hypotheses Indices"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "new hypotheses" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile logicFile
 
-  unless ← logicFile.pathExists do
-    skipTest "new hypotheses" "Logic.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile logicFile
@@ -286,16 +257,11 @@ unsafe def testNewHypothesesIndices : IO Unit := do
 unsafe def testTacticInfoFields : IO Unit := do
   printSubsection "Tactic Info Fields"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "tactic info" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile logicFile
 
-  unless ← logicFile.pathExists do
-    skipTest "tactic info" "Logic.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile logicFile

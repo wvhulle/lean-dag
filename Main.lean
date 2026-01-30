@@ -1,4 +1,4 @@
-import LeanAnalyzer.LspServer
+import LeanDag.LspServer
 import Lean.Util.Path
 
 def initializeSearchPath : IO Unit := do
@@ -16,5 +16,5 @@ def initializeSearchPath : IO Unit := do
 def main (args : List String) : IO UInt32 := do
   initializeSearchPath
   match args with
-  | "--worker" :: _ => LeanAnalyzer.workerMain
-  | _ => LeanAnalyzer.watchdogMain args
+  | "--worker" :: _ => LeanDag.workerMain
+  | _ => LeanDag.watchdogMain args

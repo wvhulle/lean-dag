@@ -1,10 +1,10 @@
 import Lean
-import LeanAnalyzer
+import LeanDag
 import Tests.Harness
 
 namespace Tests.UnitProofState
 
-open Lean LeanAnalyzer Tests.Harness
+open Lean LeanDag Tests.Harness
 
 /-! ## Hypothesis Tracking Tests -/
 

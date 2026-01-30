@@ -1,12 +1,12 @@
 import Lean
 import Lean.Data.Lsp.Ipc
-import LeanAnalyzer
+import LeanDag
 import Tests.LspClient
 import Tests.Harness
 
 namespace Tests.RpcTactics
 
-open Lean Lsp Ipc JsonRpc LeanAnalyzer Tests.LspClient Tests.Harness
+open Lean Lsp Ipc JsonRpc LeanDag Tests.LspClient Tests.Harness
 
 def edgeCaseFile : System.FilePath := testProjectPath / "EdgeCases.lean"
 def simpleFile : System.FilePath := testProjectPath / "Simple.lean"
@@ -16,16 +16,11 @@ def simpleFile : System.FilePath := testProjectPath / "Simple.lean"
 unsafe def testNestedConv : IO Unit := do
   printSubsection "Nested Tactic (conv block)"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "nested conv" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile edgeCaseFile
 
-  unless ← edgeCaseFile.pathExists do
-    skipTest "nested conv" "EdgeCases.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile edgeCaseFile
@@ -57,16 +52,11 @@ unsafe def testNestedConv : IO Unit := do
 unsafe def testCalcBlock : IO Unit := do
   printSubsection "Calc Block Proof"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "calc" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile edgeCaseFile
 
-  unless ← edgeCaseFile.pathExists do
-    skipTest "calc" "EdgeCases.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile edgeCaseFile
@@ -97,16 +87,11 @@ unsafe def testCalcBlock : IO Unit := do
 unsafe def testMultipleRewrites : IO Unit := do
   printSubsection "Multiple Rewrites in One Tactic"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "multi rw" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile edgeCaseFile
 
-  unless ← edgeCaseFile.pathExists do
-    skipTest "multi rw" "EdgeCases.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile edgeCaseFile
@@ -139,16 +124,11 @@ unsafe def testMultipleRewrites : IO Unit := do
 unsafe def testSessionReuse : IO Unit := do
   printSubsection "RPC Session Reuse"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "session reuse" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile simpleFile
 
-  unless ← simpleFile.pathExists do
-    skipTest "session reuse" "Simple.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile simpleFile
@@ -178,16 +158,11 @@ unsafe def testSessionReuse : IO Unit := do
 unsafe def testDeepNesting : IO Unit := do
   printSubsection "Deep Nesting (Cases within Cases)"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "deep nesting" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile edgeCaseFile
 
-  unless ← edgeCaseFile.pathExists do
-    skipTest "deep nesting" "EdgeCases.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile edgeCaseFile
@@ -219,16 +194,11 @@ unsafe def testDeepNesting : IO Unit := do
 unsafe def testConstructorProof : IO Unit := do
   printSubsection "Constructor (And.intro)"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "constructor" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile edgeCaseFile
 
-  unless ← edgeCaseFile.pathExists do
-    skipTest "constructor" "EdgeCases.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile edgeCaseFile

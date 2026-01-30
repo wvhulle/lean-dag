@@ -1,20 +1,29 @@
 import Lake
 open Lake DSL
 
-package «lean-analyzer» where
+package «lean-dag» where
 
 require mathlib from git "https://github.com/leanprover-community/mathlib4" @ "v4.26.0-rc2"
 
-lean_lib «LeanAnalyzer» where
+lean_lib «LeanDag» where
 
 lean_lib «Tests» where
   globs := #[.submodules `Tests]
 
-lean_exe «lean-analyzer» where
+lean_exe «lean-dag» where
   root := `Main
   supportInterpreter := true
 
-@[test_driver]
-lean_exe «lean-analyzer-tests» where
+lean_exe «lean-dag-tests» where
   root := `Tests.Main
   supportInterpreter := true
+
+/-- Run tests after building the lean-dag binary (required for RPC integration tests) -/
+@[test_driver]
+script test do
+  -- Build the lean-dag binary first (required by RPC integration tests at runtime)
+  let buildResult ← IO.Process.run { cmd := "lake", args := #["build", "lean-dag"] }
+  if !buildResult.isEmpty then IO.println buildResult
+  -- Then run the test executable
+  let exitCode ← IO.Process.spawn { cmd := ".lake/build/bin/lean-dag-tests" } >>= (·.wait)
+  return exitCode

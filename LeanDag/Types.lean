@@ -90,6 +90,16 @@ partial def TaggedText.toPlainText : TaggedText → String
   | .append items => String.join (items.toList.map TaggedText.toPlainText)
   | .tag _ content => content.toPlainText
 
+/-- Check if the TaggedText is empty. -/
+def TaggedText.isEmpty (t : TaggedText) : Bool :=
+  t.toPlainText.isEmpty
+
+instance : ToString TaggedText where
+  toString t := t.toPlainText
+
+/-- Allow strings to be used where TaggedText is expected. -/
+instance : Coe String TaggedText := ⟨TaggedText.text⟩
+
 /-! ## Navigation Types -/
 
 /-- A location for "go to definition" navigation. -/

@@ -255,6 +255,46 @@ def resolveConstLocation (name : Name) : MetaM (Option LeanDag.GotoLocation) := 
     position := ⟨r.pos.line - 1, r.charUtf16⟩
   }
 
+/-- Try to resolve a constant location without logging.
+    Returns Some if the constant has a resolvable URI, None otherwise. -/
+def tryResolveConstLocation (name : Name) : MetaM (Option LeanDag.GotoLocation) := do
+  let env ← getEnv
+  if !env.contains name then return none
+  let some ranges ← findDeclarationRanges? name | return none
+  let some modName ← findModuleOf? name | return none
+  let some modUri ← Server.documentUriFromModule? modName | return none
+  let r := ranges.selectionRange
+  return some { uri := modUri, position := ⟨r.pos.line - 1, r.charUtf16⟩ }
+
+/-- Find the first constant in an expression that resolves to a URI.
+    Walks the expression tree depth-first until it finds a resolvable constant. -/
+partial def findFirstResolvableConst (type : Expr) : MetaM (Option Name) := do
+  let type := type.consumeMData
+  match type with
+  | .const n _ =>
+    if let some _ ← tryResolveConstLocation n then
+      return some n
+    else
+      return none
+  | .app fn arg =>
+    if let some n ← findFirstResolvableConst fn then return some n
+    findFirstResolvableConst arg
+  | .forallE _ dom body _ =>
+    if let some n ← findFirstResolvableConst dom then return some n
+    findFirstResolvableConst body
+  | .mdata _ e => findFirstResolvableConst e
+  | _ => return none
+
+/-- Find the first free variable in an expression and return its type's first resolvable constant. -/
+def findFirstVarTypeConst (type : Expr) (lctx : LocalContext) : MetaM (Option Name) := do
+  let fvarIds := (collectFVars {} type).fvarIds
+  match fvarIds[0]? with
+  | some fvarId =>
+    match lctx.find? fvarId with
+    | some decl => findFirstResolvableConst decl.type
+    | none => return none
+  | none => return none
+
 def formatGoal (ctx : ContextInfo) (id : MVarId) (infoTree : InfoTree) (text : FileMap) (fileUri : String) : RequestM ParsedGoal := do
   IO.eprintln s!"[goto] formatGoal: id={id.name}, fileUri={fileUri}"
   let some decl := ctx.mctx.findDecl? id
@@ -282,19 +322,24 @@ def formatGoal (ctx : ContextInfo) (id : MVarId) (infoTree : InfoTree) (text : F
     IO.eprintln s!"[goto] hyp {hypDecl.userName}: def={gotoLocations.definition.isSome}, typeDef={gotoLocations.typeDef.isSome}"
     return { username := hypDecl.userName.toString, type, value, id := hypDecl.fvarId.name.toString, isProof, gotoLocations } :: acc
   let type := (← ppExprWithInfos ppCtx decl.type).fmt.pretty
-  -- Resolve goto location for the goal type
-  let goalTypeConstName ← ctx.runMetaM decl.lctx do
-    let name := getTypeConstName decl.type
-    IO.eprintln s!"[goto] goal: typeConstName={name}"
-    return name
+  -- Resolve goto locations for the goal:
+  -- 'd' (definition): find first resolvable constant in the goal type
+  -- 't' (typeDef): find the type of the first variable in the goal
   let goalGotoLocations : LeanDag.GotoLocations := {
     definition := ← ctx.runMetaM decl.lctx do
-      match goalTypeConstName with
+      let name? ← findFirstResolvableConst decl.type
+      IO.eprintln s!"[goto] goal definition: firstResolvableConst={name?}"
+      match name? with
       | some name => resolveConstLocation name
       | none => pure none
-    typeDef := none
+    typeDef := ← ctx.runMetaM decl.lctx do
+      let name? ← findFirstVarTypeConst decl.type decl.lctx
+      IO.eprintln s!"[goto] goal typeDef: firstVarTypeConst={name?}"
+      match name? with
+      | some name => resolveConstLocation name
+      | none => pure none
   }
-  IO.eprintln s!"[goto] goal: def={goalGotoLocations.definition.isSome}"
+  IO.eprintln s!"[goto] goal: def={goalGotoLocations.definition.isSome}, typeDef={goalGotoLocations.typeDef.isSome}"
   return { username := decl.userName.toString, type, hyps, id, gotoLocations := goalGotoLocations }
 
 def filterUnassignedGoals (goals : List MVarId) (mctx : MetavarContext) : List MVarId :=

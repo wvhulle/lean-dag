@@ -4,6 +4,92 @@ open Lean
 
 namespace LeanDag
 
+/-! ## Diff Types (matching Lean.Widget.DiffTag) -/
+
+/-- A tag indicating the diff status of a subexpression. Matches Lean.Widget.DiffTag. -/
+inductive DiffTag where
+  | wasChanged   -- Subexpression was modified (in "before" view)
+  | willChange   -- Subexpression will be modified (in "after" view)
+  | wasDeleted   -- Subexpression was deleted (in "before" view)
+  | willDelete   -- Subexpression will be deleted (in "after" view)
+  | wasInserted  -- Subexpression was inserted (in "before" view)
+  | willInsert   -- Subexpression will be inserted (in "after" view)
+  deriving Inhabited, BEq, Repr
+
+instance : ToJson DiffTag where
+  toJson
+    | .wasChanged => "wasChanged"
+    | .willChange => "willChange"
+    | .wasDeleted => "wasDeleted"
+    | .willDelete => "willDelete"
+    | .wasInserted => "wasInserted"
+    | .willInsert => "willInsert"
+
+instance : FromJson DiffTag where
+  fromJson? j := do
+    let s ← j.getStr?
+    match s with
+    | "wasChanged" => pure .wasChanged
+    | "willChange" => pure .willChange
+    | "wasDeleted" => pure .wasDeleted
+    | "willDelete" => pure .willDelete
+    | "wasInserted" => pure .wasInserted
+    | "willInsert" => pure .willInsert
+    | _ => throw s!"invalid DiffTag: {s}"
+
+/-- Subexpression info with optional diff status. Simplified version of Lean.Widget.SubexprInfo. -/
+structure SubexprInfo where
+  /-- Diff status for this subexpression (for before/after highlighting). -/
+  diffStatus : Option DiffTag := none
+  deriving Inhabited, BEq, Repr, ToJson, FromJson
+
+/-! ## Tagged Text (matching Lean.Widget.TaggedText structure) -/
+
+/-- Tagged text that can carry diff information per subexpression.
+    Matches the JSON structure of Lean.Widget.TaggedText. -/
+inductive TaggedText where
+  | text (s : String)
+  | append (items : Array TaggedText)
+  | tag (info : SubexprInfo) (content : TaggedText)
+  deriving Inhabited, BEq, Repr
+
+/-- Convert TaggedText to JSON matching Lean.Widget.TaggedText format. -/
+partial def TaggedText.toJson : TaggedText → Json
+  | .text s => Json.mkObj [("kind", "text"), ("text", s)]
+  | .append items => Json.mkObj [("kind", "append"), ("items", Json.arr (items.map TaggedText.toJson))]
+  | .tag info content => Json.mkObj [("kind", "tag"), ("info", Lean.toJson info), ("content", content.toJson)]
+
+instance : ToJson TaggedText := ⟨TaggedText.toJson⟩
+
+/-- Parse TaggedText from JSON. -/
+partial def TaggedText.fromJson? (j : Json) : Except String TaggedText := do
+  let kind ← j.getObjValAs? String "kind"
+  match kind with
+  | "text" => return .text (← j.getObjValAs? String "text")
+  | "append" =>
+    let items ← j.getObjValAs? (Array Json) "items"
+    return .append (← items.mapM TaggedText.fromJson?)
+  | "tag" =>
+    let info ← j.getObjValAs? SubexprInfo "info"
+    let content ← j.getObjVal? "content" >>= TaggedText.fromJson?
+    return .tag info content
+  | _ => throw s!"invalid TaggedText kind: {kind}"
+
+instance : FromJson TaggedText := ⟨TaggedText.fromJson?⟩
+
+/-- Create plain text (no diff info). -/
+def TaggedText.plain (s : String) : TaggedText := .text s
+
+/-- Wrap text with a diff tag. -/
+def TaggedText.withDiff (t : TaggedText) (tag : DiffTag) : TaggedText :=
+  .tag { diffStatus := some tag } t
+
+/-- Extract plain text, stripping all tags. -/
+partial def TaggedText.toPlainText : TaggedText → String
+  | .text s => s
+  | .append items => String.join (items.toList.map TaggedText.toPlainText)
+  | .tag _ content => content.toPlainText
+
 /-! ## Navigation Types -/
 
 /-- A location for "go to definition" navigation. -/
@@ -24,16 +110,18 @@ structure GotoLocations where
 structure HypothesisInfo where
   /-- User-visible name. -/
   name : String
-  /-- Type expression. -/
-  type : String
-  /-- Value for let-bindings. -/
-  value : Option String := none
+  /-- Type expression (with diff highlighting). -/
+  type : TaggedText
+  /-- Value for let-bindings (with diff highlighting). -/
+  value : Option TaggedText := none
   /-- Internal ID for tracking. -/
   id : String
   /-- Whether this hypothesis is a proof term. -/
   isProof : Bool := false
   /-- Whether this is a type class instance. -/
   isInstance : Bool := false
+  /-- Whether this hypothesis was removed (for diff display in "before" view). -/
+  isRemoved : Bool := false
   /-- Pre-resolved navigation locations. -/
   gotoLocations : GotoLocations := {}
   deriving Inhabited, ToJson, FromJson, BEq, Repr
@@ -42,12 +130,14 @@ structure HypothesisInfo where
 
 /-- Goal info for the TUI proof DAG. -/
 structure GoalInfo where
-  /-- Goal type expression. -/
-  type : String
+  /-- Goal type expression (with diff highlighting). -/
+  type : TaggedText
   /-- User-visible name (e.g., "case inl"). -/
   username : Option String := none
   /-- Internal goal ID for tracking. -/
   id : String
+  /-- Whether this goal was removed (for diff display in "before" view). -/
+  isRemoved : Bool := false
   /-- Pre-resolved navigation locations. -/
   gotoLocations : GotoLocations := {}
   deriving Inhabited, ToJson, FromJson, BEq, Repr

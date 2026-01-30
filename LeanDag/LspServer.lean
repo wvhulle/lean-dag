@@ -60,17 +60,88 @@ def getDefinitionName (tree : InfoTree) : Option String :=
 /-! ## Conversion -/
 
 def convertGoalInfo (g : ParsedGoal) : GoalInfo where
-  type := g.type
+  type := .plain g.type
   username := filterNameOpt g.username
   id := g.id.name.toString
 
 def convertHypothesis (h : ParsedHypothesis) : HypothesisInfo where
   name := filterName h.username
-  type := h.type
-  value := h.value
+  type := .plain h.type
+  value := h.value.map TaggedText.plain
   id := h.id
   isProof := h.isProof == "proof"
   isInstance := false
+
+/-! ## Diff Computation -/
+
+/-- Mark a hypothesis type with a diff tag. -/
+def HypothesisInfo.withDiffTag (h : HypothesisInfo) (tag : DiffTag) : HypothesisInfo :=
+  { h with type := h.type.withDiff tag }
+
+/-- Mark a goal type with a diff tag. -/
+def GoalInfo.withDiffTag (g : GoalInfo) (tag : DiffTag) : GoalInfo :=
+  { g with type := g.type.withDiff tag }
+
+/-- Compute diff for a "before" state by comparing with "after" state.
+    Marks hypotheses/goals that will change or be deleted. -/
+def diffStateBefore (before after : ProofState) : ProofState :=
+  let afterHypIds := after.hypotheses.map (·.id) |>.toArray
+  let afterGoalIds := after.goals.map (·.id) |>.toArray
+  let diffedHyps := before.hypotheses.map fun h =>
+    if afterHypIds.contains h.id then
+      -- Check if type changed
+      let afterHyp := after.hypotheses.find? (·.id == h.id)
+      match afterHyp with
+      | some ah =>
+        if h.type.toPlainText != ah.type.toPlainText then
+          h.withDiffTag .willChange
+        else h
+      | none => h
+    else
+      -- Hypothesis will be deleted
+      { h with isRemoved := true, type := h.type.withDiff .willDelete }
+  let diffedGoals := before.goals.map fun g =>
+    if afterGoalIds.contains g.id then
+      let afterGoal := after.goals.find? (·.id == g.id)
+      match afterGoal with
+      | some ag =>
+        if g.type.toPlainText != ag.type.toPlainText then
+          g.withDiffTag .willChange
+        else g
+      | none => g
+    else
+      { g with isRemoved := true, type := g.type.withDiff .willDelete }
+  { hypotheses := diffedHyps, goals := diffedGoals }
+
+/-- Compute diff for an "after" state by comparing with "before" state.
+    Marks hypotheses/goals that changed or were inserted. -/
+def diffStateAfter (before after : ProofState) : ProofState :=
+  let beforeHypIds := before.hypotheses.map (·.id) |>.toArray
+  let beforeGoalIds := before.goals.map (·.id) |>.toArray
+  let diffedHyps := after.hypotheses.map fun h =>
+    if beforeHypIds.contains h.id then
+      let beforeHyp := before.hypotheses.find? (·.id == h.id)
+      match beforeHyp with
+      | some bh =>
+        if h.type.toPlainText != bh.type.toPlainText then
+          h.withDiffTag .wasChanged
+        else h
+      | none => h
+    else
+      -- New hypothesis was inserted
+      h.withDiffTag .wasInserted
+  let diffedGoals := after.goals.map fun g =>
+    if beforeGoalIds.contains g.id then
+      let beforeGoal := before.goals.find? (·.id == g.id)
+      match beforeGoal with
+      | some bg =>
+        if g.type.toPlainText != bg.type.toPlainText then
+          g.withDiffTag .wasChanged
+        else g
+      | none => g
+    else
+      g.withDiffTag .wasInserted
+  { hypotheses := diffedHyps, goals := diffedGoals }
 
 def buildProofDag (steps : List ParsedStep) (cursorPos : Lsp.Position)
     (definitionName : Option String := none) : ProofDag :=
@@ -131,11 +202,17 @@ def buildProofDag (steps : List ParsedStep) (cursorPos : Lsp.Position)
         if !hypIdsBefore.contains hyp.id then
           result := result ++ [i]
       return result
+    -- Build raw states (without diff)
+    let rawStateBefore : ProofState := { goals := [goalBefore], hypotheses := hypsBefore }
+    let rawStateAfter : ProofState := { goals := goalsAfter, hypotheses := hypsAfter }
+    -- Apply diff highlighting: stateBefore shows what will change, stateAfter shows what changed
+    let stateBefore := diffStateBefore rawStateBefore rawStateAfter
+    let stateAfter := diffStateAfter rawStateBefore rawStateAfter
     { id := idx
       tactic := { text := step.tacticString, dependsOn := step.tacticDependsOn, theoremsUsed := step.theorems.map (·.name) }
       position := step.position.start
-      stateBefore := { goals := [goalBefore], hypotheses := hypsBefore }
-      stateAfter := { goals := goalsAfter, hypotheses := hypsAfter }
+      stateBefore
+      stateAfter
       newHypotheses
       children := childrenOf[idx]?.getD []
       parent := parentOf[idx]?.join

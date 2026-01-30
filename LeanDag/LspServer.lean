@@ -5,7 +5,7 @@ import Lean.Server.Requests
 import LeanDag.Types
 import LeanDag.InfoTreeParser
 
-open Lean Server Lsp JsonRpc
+open Lean Elab Server Lsp JsonRpc
 open Lean.Server.FileWorker Lean.Server.Snapshots
 open LeanDag.InfoTreeParser
 
@@ -41,6 +41,21 @@ structure GetProofDagResult where
   version  : Nat := 5
   deriving FromJson, ToJson
 
+/-! ## Definition Name Extraction -/
+
+/-- Extract the definition name from the InfoTree by finding the enclosing command. -/
+def getDefinitionName (tree : InfoTree) : Option String :=
+  let names := tree.collectNodesBottomUp fun _ctx i _cs acc =>
+    match i with
+    | .ofCommandInfo ci =>
+      if h : ci.stx.getNumArgs > 1 then
+        let arg := ci.stx[1]
+        let id := arg.getId
+        if id.isAnonymous then acc else id.toString :: acc
+      else acc
+    | _ => acc
+  names.head?
+
 /-! ## Conversion -/
 
 def convertGoalInfo (g : ParsedGoal) : GoalInfo where
@@ -56,7 +71,8 @@ def convertHypothesis (h : ParsedHypothesis) : HypothesisInfo where
   isProof := h.isProof == "proof"
   isInstance := false
 
-def buildProofDag (steps : List ParsedStep) (cursorPos : Lsp.Position) : ProofDag :=
+def buildProofDag (steps : List ParsedStep) (cursorPos : Lsp.Position)
+    (definitionName : Option String := none) : ProofDag :=
   if steps.isEmpty then {} else
   let stepsArray := steps.toArray
   -- Build goal ID to step index map: which step produces which goals
@@ -144,7 +160,7 @@ def buildProofDag (steps : List ParsedStep) (cursorPos : Lsp.Position) : ProofDa
           best := some node.id
           bestPos := pos
     return best
-  { nodes, root, orphans, currentNode, initialState := nodes[0]!.stateBefore }
+  { nodes, root, orphans, currentNode, initialState := nodes[0]!.stateBefore, definitionName }
 
 /-! ## RPC Handler -/
 
@@ -161,8 +177,9 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
     | "tree" =>
       match ← parseInfoTree snap.infoTree with
       | some result =>
-        IO.eprintln s!"[RPC] tree mode: {result.steps.length} steps"
-        return { proofDag := buildProofDag result.steps params.position }
+        let definitionName := getDefinitionName snap.infoTree
+        IO.eprintln s!"[RPC] tree mode: {result.steps.length} steps, def={definitionName}"
+        return { proofDag := buildProofDag result.steps params.position definitionName }
       | none =>
         IO.eprintln "[RPC] tree mode: no result"
         return { proofDag := {} }
@@ -170,8 +187,9 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
       match goalsAt? snap.infoTree text hoverPos with
       | r :: _ =>
         let result ← parseTacticInfo snap.infoTree r.ctxInfo (.ofTacticInfo r.tacticInfo) [] ∅ true
-        IO.eprintln s!"[RPC] single_tactic mode: {result.steps.length} steps"
-        return { proofDag := buildProofDag result.steps params.position }
+        let definitionName := getDefinitionName snap.infoTree
+        IO.eprintln s!"[RPC] single_tactic mode: {result.steps.length} steps, def={definitionName}"
+        return { proofDag := buildProofDag result.steps params.position definitionName }
       | [] =>
         IO.eprintln "[RPC] single_tactic mode: no goals at position"
         return { proofDag := {} }

@@ -131,11 +131,12 @@ def buildProofDag (steps : List ParsedStep) (cursorPos : Lsp.Position) : ProofDa
     | [] => (none, [])
     | r :: rest => (some r, rest)
   -- Find current node: the node whose position is closest to (but not after) cursor
-  let currentNode := Id.run do
+  let currentNode : Option Nat := Id.run do
     let mut best : Option Nat := none
     let mut bestPos : Lsp.Position := ⟨0, 0⟩
-    for node in nodes do
-      let pos := node.position
+    for h : i in [:nodes.size] do
+      let node : ProofDagNode := nodes[i]
+      let pos : Lsp.Position := node.position
       -- Node is at or before cursor position
       if pos.line < cursorPos.line || (pos.line == cursorPos.line && pos.character <= cursorPos.character) then
         -- And it's better than current best (closer to cursor)

@@ -214,111 +214,6 @@ def findBinderLocation (infoTree : InfoTree) (fvarId : FVarId) (text : FileMap) 
       let lspPos := text.utf8PosToLspPos range.start
       { uri := "", position := lspPos }  -- URI will be filled in by caller
 
-/-- Debug version that logs what it's doing. -/
-def findBinderLocationDebug (infoTree : InfoTree) (fvarId : FVarId) (text : FileMap) : IO (Option LeanDag.GotoLocation) := do
-  IO.eprintln s!"[goto] Looking for binder of fvarId={fvarId.name}"
-  let result := findBinderLocation infoTree fvarId text
-  IO.eprintln s!"[goto] Binder location result: {result.isSome}"
-  return result
-
-/-- Get the primary constant name from a type expression for goto definition. -/
-partial def getTypeConstName (type : Expr) : Option Name :=
-  let type := type.consumeMData
-  match type with
-  | .const n _ => some n
-  | .app fn _ => getTypeConstName fn
-  | .forallE _ _ body _ => getTypeConstName body
-  | .mdata _ e => getTypeConstName e
-  | _ => none
-
-/-- Resolve the definition location of a constant.
-    Returns the source file URI and position. -/
-def resolveConstLocation (name : Name) : MetaM (Option LeanDag.GotoLocation) := do
-  IO.eprintln s!"[goto] resolveConstLocation: name={name}"
-  let env ← getEnv
-  if !env.contains name then
-    IO.eprintln s!"[goto] resolveConstLocation: {name} not in env"
-    return none
-  let some ranges ← findDeclarationRanges? name |
-    IO.eprintln s!"[goto] resolveConstLocation: no ranges for {name}"
-    return none
-  let some modName ← findModuleOf? name |
-    IO.eprintln s!"[goto] resolveConstLocation: no module for {name}"
-    return none
-  let some modUri ← Server.documentUriFromModule? modName |
-    IO.eprintln s!"[goto] resolveConstLocation: no URI for module {modName}"
-    return none
-  let r := ranges.selectionRange
-  IO.eprintln s!"[goto] resolveConstLocation: resolved {name} to {modUri} @ {r.pos.line - 1}:{r.charUtf16}"
-  return some {
-    uri := modUri
-    position := ⟨r.pos.line - 1, r.charUtf16⟩
-  }
-
-/-- Try to resolve a constant location without logging.
-    Returns Some if the constant has a resolvable URI, None otherwise. -/
-def tryResolveConstLocation (name : Name) : MetaM (Option LeanDag.GotoLocation) := do
-  let env ← getEnv
-  if !env.contains name then return none
-  let some ranges ← findDeclarationRanges? name | return none
-  let some modName ← findModuleOf? name | return none
-  let some modUri ← Server.documentUriFromModule? modName | return none
-  let r := ranges.selectionRange
-  return some { uri := modUri, position := ⟨r.pos.line - 1, r.charUtf16⟩ }
-
-/-- Find the first resolvable constant in an expression.
-    Prioritizes term arguments over type arguments:
-    1. Check the head constant (e.g., Eq, And, Inter.inter)
-    2. Check term arguments (from end of arg list, as type args come first)
-    3. Fall back to type arguments if no term arg resolves -/
-partial def findFirstResolvableConst (type : Expr) (depth : Nat := 0) : MetaM (Option Name) := do
-  let indent := String.mk (List.replicate (depth * 2) ' ')
-  let type := type.consumeMData
-  IO.eprintln s!"{indent}[findConst] expr kind={type.ctorName}"
-  match type with
-  | .const n _ =>
-    let resolved ← tryResolveConstLocation n
-    IO.eprintln s!"{indent}[findConst] const {n} resolvable={resolved.isSome}"
-    if resolved.isSome then return some n else return none
-  | .app .. =>
-    let fn := type.getAppFn.consumeMData
-    let args := type.getAppArgs
-    IO.eprintln s!"{indent}[findConst] app head={fn.ctorName} numArgs={args.size}"
-    -- First try the head constant
-    if let .const n _ := fn then
-      let resolved ← tryResolveConstLocation n
-      IO.eprintln s!"{indent}[findConst] head const {n} resolvable={resolved.isSome}"
-      if resolved.isSome then return some n
-    -- Then try arguments in reverse order (term args are typically at the end)
-    for i in [:args.size] do
-      let arg := args[args.size - 1 - i]!
-      IO.eprintln s!"{indent}[findConst] trying arg {i} (reverse)"
-      if let some n ← findFirstResolvableConst arg (depth + 1) then
-        return some n
-    -- Fall back to checking the function if it's not a simple constant
-    if !fn.isConst then
-      findFirstResolvableConst fn (depth + 1)
-    else
-      return none
-  | .forallE _ dom body _ =>
-    IO.eprintln s!"{indent}[findConst] forallE"
-    if let some n ← findFirstResolvableConst body (depth + 1) then return some n
-    findFirstResolvableConst dom (depth + 1)
-  | .mdata _ e => findFirstResolvableConst e depth
-  | _ =>
-    IO.eprintln s!"{indent}[findConst] unhandled expr kind"
-    return none
-
-/-- Find the first free variable in an expression and return its type's first resolvable constant. -/
-def findFirstVarTypeConst (type : Expr) (lctx : LocalContext) : MetaM (Option Name) := do
-  let fvarIds := (collectFVars {} type).fvarIds
-  match fvarIds[0]? with
-  | some fvarId =>
-    match lctx.find? fvarId with
-    | some decl => findFirstResolvableConst decl.type
-    | none => return none
-  | none => return none
-
 def formatGoal (ctx : ContextInfo) (id : MVarId) (infoTree : InfoTree) (text : FileMap) (fileUri : String) : RequestM ParsedGoal := do
   IO.eprintln s!"[goto] formatGoal: id={id.name}, fileUri={fileUri}"
   let some decl := ctx.mctx.findDecl? id
@@ -330,47 +225,17 @@ def formatGoal (ctx : ContextInfo) (id : MVarId) (infoTree : InfoTree) (text : F
     let type := (← ppExprWithInfos ppCtx hypDecl.type).fmt.pretty
     let value ← hypDecl.value?.mapM fun v => do pure (← ppExprWithInfos ppCtx v).fmt.pretty
     let isProof ← ctx.runMetaM decl.lctx (exprKind hypDecl.toExpr)
-    -- Resolve goto locations for the hypothesis:
-    -- 'd' (definition): find first resolvable constant in the hypothesis type
-    -- 't' (typeDef): find the type of the first variable in the hypothesis type
-    let hypDefinition ← ctx.runMetaM decl.lctx do
-      let name? ← findFirstResolvableConst hypDecl.type
-      IO.eprintln s!"[goto] hyp {hypDecl.userName} definition: firstResolvableConst={name?}"
-      match name? with
-      | some name => resolveConstLocation name
-      | none => pure none
-    let hypTypeDef ← ctx.runMetaM decl.lctx do
-      let name? ← findFirstVarTypeConst hypDecl.type decl.lctx
-      IO.eprintln s!"[goto] hyp {hypDecl.userName} typeDef: firstVarTypeConst={name?}"
-      match name? with
-      | some name => resolveConstLocation name
-      | none => pure none
+    -- Resolve goto location: binder location (where the hypothesis was introduced)
+    let binderLoc := findBinderLocation infoTree hypDecl.fvarId text
     let gotoLocations : LeanDag.GotoLocations := {
-      definition := hypDefinition
-      typeDef := hypTypeDef
+      definition := binderLoc.map fun loc => { loc with uri := fileUri }
+      typeDef := none
     }
-    IO.eprintln s!"[goto] hyp {hypDecl.userName}: def={gotoLocations.definition.isSome}, typeDef={gotoLocations.typeDef.isSome}"
+    IO.eprintln s!"[goto] hyp {hypDecl.userName}: binderLoc={gotoLocations.definition.isSome}"
     return { username := hypDecl.userName.toString, type, value, id := hypDecl.fvarId.name.toString, isProof, gotoLocations } :: acc
   let type := (← ppExprWithInfos ppCtx decl.type).fmt.pretty
-  -- Resolve goto locations for the goal:
-  -- 'd' (definition): find first resolvable constant in the goal type
-  -- 't' (typeDef): find the type of the first variable in the goal
-  let goalGotoLocations : LeanDag.GotoLocations := {
-    definition := ← ctx.runMetaM decl.lctx do
-      let name? ← findFirstResolvableConst decl.type
-      IO.eprintln s!"[goto] goal definition: firstResolvableConst={name?}"
-      match name? with
-      | some name => resolveConstLocation name
-      | none => pure none
-    typeDef := ← ctx.runMetaM decl.lctx do
-      let name? ← findFirstVarTypeConst decl.type decl.lctx
-      IO.eprintln s!"[goto] goal typeDef: firstVarTypeConst={name?}"
-      match name? with
-      | some name => resolveConstLocation name
-      | none => pure none
-  }
-  IO.eprintln s!"[goto] goal: def={goalGotoLocations.definition.isSome}, typeDef={goalGotoLocations.typeDef.isSome}"
-  return { username := decl.userName.toString, type, hyps, id, gotoLocations := goalGotoLocations }
+  -- Goal goto location is handled by TUI using node position
+  return { username := decl.userName.toString, type, hyps, id, gotoLocations := {} }
 
 def filterUnassignedGoals (goals : List MVarId) (mctx : MetavarContext) : List MVarId :=
   goals.filter fun id =>

@@ -56,7 +56,7 @@ def convertHypothesis (h : ParsedHypothesis) : HypothesisInfo where
   isProof := h.isProof == "proof"
   isInstance := false
 
-def buildProofDag (steps : List ParsedStep) : ProofDag :=
+def buildProofDag (steps : List ParsedStep) (cursorPos : Lsp.Position) : ProofDag :=
   if steps.isEmpty then {} else
   let stepsArray := steps.toArray
   -- Build goal ID to step index map: which step produces which goals
@@ -130,7 +130,20 @@ def buildProofDag (steps : List ParsedStep) : ProofDag :=
   let (root, orphans) := match rootCandidates with
     | [] => (none, [])
     | r :: rest => (some r, rest)
-  { nodes, root, orphans, currentNode := some (nodes.size - 1), initialState := nodes[0]!.stateBefore }
+  -- Find current node: the node whose position is closest to (but not after) cursor
+  let currentNode := Id.run do
+    let mut best : Option Nat := none
+    let mut bestPos : Lsp.Position := ⟨0, 0⟩
+    for node in nodes do
+      let pos := node.position
+      -- Node is at or before cursor position
+      if pos.line < cursorPos.line || (pos.line == cursorPos.line && pos.character <= cursorPos.character) then
+        -- And it's better than current best (closer to cursor)
+        if best.isNone || pos.line > bestPos.line || (pos.line == bestPos.line && pos.character > bestPos.character) then
+          best := some node.id
+          bestPos := pos
+    return best
+  { nodes, root, orphans, currentNode, initialState := nodes[0]!.stateBefore }
 
 /-! ## RPC Handler -/
 
@@ -148,7 +161,7 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
       match ← parseInfoTree snap.infoTree with
       | some result =>
         IO.eprintln s!"[RPC] tree mode: {result.steps.length} steps"
-        return { proofDag := buildProofDag result.steps }
+        return { proofDag := buildProofDag result.steps params.position }
       | none =>
         IO.eprintln "[RPC] tree mode: no result"
         return { proofDag := {} }
@@ -157,7 +170,7 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
       | r :: _ =>
         let result ← parseTacticInfo snap.infoTree r.ctxInfo (.ofTacticInfo r.tacticInfo) [] ∅ true
         IO.eprintln s!"[RPC] single_tactic mode: {result.steps.length} steps"
-        return { proofDag := buildProofDag result.steps }
+        return { proofDag := buildProofDag result.steps params.position }
       | [] =>
         IO.eprintln "[RPC] single_tactic mode: no goals at position"
         return { proofDag := {} }

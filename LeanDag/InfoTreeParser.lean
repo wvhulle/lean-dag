@@ -189,7 +189,7 @@ def findUsedHypotheses (goalId : MVarId) (goalDecl : MetavarDecl) (mctxAfter : M
   let some expr := mctxAfter.eAssignment.find? goalId | return []
   let fullExpr ← instantiateExprMVars expr
   let fvarIds := (collectFVars {} fullExpr).fvarIds
-  return (fvarIds.filterMap goalDecl.lctx.find?).map (·.fvarId.name.toString) |>.toList
+  return (fvarIds.filterMap goalDecl.lctx.find?).map (·.userName.toString) |>.toList
 
 def findAssignedMVars (goalId : MVarId) (mctxAfter : MetavarContext) : MetaM (List MVarId) := do
   let some expr := mctxAfter.eAssignment.find? goalId | return []

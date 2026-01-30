@@ -107,8 +107,13 @@ def buildProofDag (steps : List ParsedStep) : ProofDag :=
       | none => hypsBefore
     -- Compute new hypotheses: indices in hypsAfter for hyps not in hypsBefore
     let hypIdsBefore : Std.HashSet String := Std.HashSet.ofList (hypsBefore.map (·.id))
-    let newHypotheses := hypsAfter.toArray.mapIdx (fun i h =>
-      if hypIdsBefore.contains h.id then none else some i.val) |>.toList.filterMap id
+    let newHypotheses := Id.run do
+      let mut result : List Nat := []
+      for h : i in [:hypsAfter.length] do
+        let hyp := hypsAfter[i]!
+        if !hypIdsBefore.contains hyp.id then
+          result := result ++ [i]
+      return result
     { id := idx
       tactic := { text := step.tacticString, dependsOn := step.tacticDependsOn, theoremsUsed := step.theorems.map (·.name) }
       position := step.position.start

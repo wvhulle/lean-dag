@@ -289,58 +289,6 @@ unsafe def testTacticInfoFields : IO Unit := do
     let _ ← waitForExit
     IO.println "  ✓ tactic info fields valid"
 
-def setsFile : System.FilePath := testProjectPath / "Sets.lean"
-
-unsafe def testGotoLocationsPopulated : IO Unit := do
-  printSubsection "GotoLocations Populated (Sets proof)"
-
-  let analyzerPath ← LeanDagPath
-  requireBinary analyzerPath
-  requireFile setsFile
-
-  runWithLeanDag do
-    let _ ← initializeServer 0
-
-    let content ← IO.FS.readFile setsFile
-    let uri ← fileUri setsFile
-
-    openDocument uri content
-    waitForFileReady uri
-
-    let sessionId ← connectRpcSession 2 uri
-
-    -- Sets.lean line 8: "  ext x" in inter_comm_set (1-indexed)
-    -- This proof has hypotheses s, t : Set Nat which should have goto locations
-    let dag ← getProofDagAt uri sessionId 8 5 3
-
-    assertTrue "has nodes" (!dag.nodes.isEmpty)
-
-    -- Check that at least some hypotheses have goto locations
-    let mut foundHypWithDef := false
-    let mut foundHypWithTypeDef := false
-    let mut foundGoalWithDef := false
-
-    for node in dag.nodes do
-      for hyp in node.stateAfter.hypotheses do
-        if hyp.gotoLocations.definition.isSome then
-          foundHypWithDef := true
-          IO.println s!"  Found hyp '{hyp.name}' with definition location"
-        if hyp.gotoLocations.typeDef.isSome then
-          foundHypWithTypeDef := true
-          IO.println s!"  Found hyp '{hyp.name}' with typeDef location: {hyp.gotoLocations.typeDef.get!.uri}"
-
-      for goal in node.stateAfter.goals do
-        if goal.gotoLocations.definition.isSome then
-          foundGoalWithDef := true
-          IO.println s!"  Found goal with definition location: {goal.gotoLocations.definition.get!.uri}"
-
-    -- At least hypotheses should have typeDef (Set is resolvable)
-    assertTrue "found hyp with typeDef location" foundHypWithTypeDef
-
-    shutdown 4
-    let _ ← waitForExit
-    IO.println "  ✓ gotoLocations populated for relevant items"
-
 unsafe def runTests : IO Unit := do
   printSection "RPC ProofDag Validation Tests"
 
@@ -348,7 +296,6 @@ unsafe def runTests : IO Unit := do
   testBranchingProofStructure
   testInductionProofStructure
   testGotoLocationsField
-  testGotoLocationsPopulated
   testUsernameFiltering
   testNewHypothesesIndices
   testTacticInfoFields

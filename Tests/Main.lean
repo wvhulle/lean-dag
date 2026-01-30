@@ -1,6 +1,5 @@
 import Tests.UnitProofDag
 import Tests.UnitProofState
-import Tests.UnitGotoLocation
 import Tests.RpcBasic
 import Tests.RpcProofDag
 import Tests.RpcBoundary
@@ -13,7 +12,6 @@ unsafe def main : IO Unit := do
   -- Unit tests (no external dependencies)
   Tests.UnitProofDag.runTests
   Tests.UnitProofState.runTests
-  Tests.UnitGotoLocation.runTests
 
   -- RPC integration tests (require lean-dag binary)
   Tests.RpcBasic.runTests

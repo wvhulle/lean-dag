@@ -80,9 +80,6 @@ instance : FromJson TaggedText := ⟨TaggedText.fromJson?⟩
 /-- Create plain text (no diff info). -/
 def TaggedText.plain (s : String) : TaggedText := .text s
 
-/-- Allow strings to be used where TaggedText is expected. -/
-instance : Coe String TaggedText := ⟨TaggedText.text⟩
-
 /-- Wrap text with a diff tag. -/
 def TaggedText.withDiff (t : TaggedText) (tag : DiffTag) : TaggedText :=
   .tag { diffStatus := some tag } t
@@ -92,13 +89,6 @@ partial def TaggedText.toPlainText : TaggedText → String
   | .text s => s
   | .append items => String.join (items.toList.map TaggedText.toPlainText)
   | .tag _ content => content.toPlainText
-
-/-- Check if the TaggedText is empty. -/
-def TaggedText.isEmpty (t : TaggedText) : Bool :=
-  t.toPlainText.isEmpty
-
-instance : ToString TaggedText where
-  toString t := t.toPlainText
 
 /-! ## Navigation Types -/
 

@@ -39,8 +39,13 @@ def assertNonEmpty [Inhabited α] (name : String) (arr : Array α) : IO Unit := 
     IO.println s!"  ✗ {name}: expected non-empty array"
     throw <| IO.userError s!"Test failed: {name}"
 
-def skipTest (name : String) (reason : String) : IO Unit := do
-  IO.println s!"  ⊘ {name}: SKIPPED ({reason})"
+def requireFile (path : System.FilePath) : IO Unit := do
+  unless ← path.pathExists do
+    throw <| IO.userError s!"Required file not found: {path}"
+
+def requireBinary (path : System.FilePath) : IO Unit := do
+  unless ← path.pathExists do
+    throw <| IO.userError s!"Required binary not found: {path}. Run 'lake build lean-dag' first."
 
 def containsSubstring (s sub : String) : Bool :=
   (s.splitOn sub).length > 1

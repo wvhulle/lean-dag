@@ -1,12 +1,12 @@
 import Lean
 import Lean.Data.Lsp.Ipc
-import LeanAnalyzer
+import LeanDag
 import Tests.LspClient
 import Tests.Harness
 
 namespace Tests.RpcBoundary
 
-open Lean Lsp Ipc JsonRpc LeanAnalyzer Tests.LspClient Tests.Harness
+open Lean Lsp Ipc JsonRpc LeanDag Tests.LspClient Tests.Harness
 
 def edgeCaseFile : System.FilePath := testProjectPath / "EdgeCases.lean"
 def simpleFile : System.FilePath := testProjectPath / "Simple.lean"
@@ -16,16 +16,11 @@ def simpleFile : System.FilePath := testProjectPath / "Simple.lean"
 unsafe def testTermModeProof : IO Unit := do
   printSubsection "Term-Mode Proof (No Tactics)"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "term-mode" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile edgeCaseFile
 
-  unless ← edgeCaseFile.pathExists do
-    skipTest "term-mode" "EdgeCases.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile edgeCaseFile
@@ -56,16 +51,11 @@ unsafe def testTermModeProof : IO Unit := do
 unsafe def testSorryProof : IO Unit := do
   printSubsection "Incomplete Proof (sorry)"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "sorry" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile edgeCaseFile
 
-  unless ← edgeCaseFile.pathExists do
-    skipTest "sorry" "EdgeCases.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile edgeCaseFile
@@ -98,16 +88,11 @@ unsafe def testSorryProof : IO Unit := do
 unsafe def testInvalidPosition : IO Unit := do
   printSubsection "Invalid Cursor Position"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "invalid position" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile simpleFile
 
-  unless ← simpleFile.pathExists do
-    skipTest "invalid position" "Simple.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile simpleFile
@@ -138,16 +123,11 @@ unsafe def testInvalidPosition : IO Unit := do
 unsafe def testWhitespacePosition : IO Unit := do
   printSubsection "Cursor at Comment"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "whitespace" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile edgeCaseFile
 
-  unless ← edgeCaseFile.pathExists do
-    skipTest "whitespace" "EdgeCases.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile edgeCaseFile

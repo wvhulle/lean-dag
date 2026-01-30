@@ -2,14 +2,14 @@ import Lean
 import Lean.Server.FileWorker
 import Lean.Server.Watchdog
 import Lean.Server.Requests
-import LeanAnalyzer.Types
-import LeanAnalyzer.InfoTreeParser
+import LeanDag.Types
+import LeanDag.InfoTreeParser
 
 open Lean Server Lsp JsonRpc
 open Lean.Server.FileWorker Lean.Server.Snapshots
-open LeanAnalyzer.InfoTreeParser
+open LeanDag.InfoTreeParser
 
-namespace LeanAnalyzer
+namespace LeanDag
 
 /-! ## Name Filtering -/
 
@@ -152,9 +152,9 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
 
 builtin_initialize
   try
-    Lean.Server.registerBuiltinRpcProcedure `LeanAnalyzer.getProofDag GetProofDagParams GetProofDagResult handleGetProofDag
+    Lean.Server.registerBuiltinRpcProcedure `LeanDag.getProofDag GetProofDagParams GetProofDagResult handleGetProofDag
   catch e =>
-    IO.eprintln s!"[LeanAnalyzer] RPC registration failed: {e}"
+    IO.eprintln s!"[LeanDag] RPC registration failed: {e}"
 
 def watchdogMain (args : List String) : IO UInt32 :=
   Lean.Server.Watchdog.watchdogMain args
@@ -162,4 +162,4 @@ def watchdogMain (args : List String) : IO UInt32 :=
 def workerMain (opts : Lean.Options := {}) : IO UInt32 :=
   Lean.Server.FileWorker.workerMain opts
 
-end LeanAnalyzer
+end LeanDag

@@ -1,10 +1,10 @@
 import Lean
 import Lean.Data.Lsp.Ipc
-import LeanAnalyzer
+import LeanDag
 
 namespace Tests.LspClient
 
-open Lean Lsp Ipc JsonRpc IO LeanAnalyzer
+open Lean Lsp Ipc JsonRpc IO LeanDag
 
 /-!
 ## Position Convention
@@ -93,13 +93,13 @@ def hoverRequest (requestId : Nat) (uri : String) (line col : Nat) : IpcM (Optio
   let resp ← readResponseAs requestId (Option Hover)
   return resp.result
 
-def leanAnalyzerPath : IO System.FilePath := do
+def LeanDagPath : IO System.FilePath := do
   let cwd ← IO.currentDir
-  return cwd / ".lake" / "build" / "bin" / "lean-analyzer"
+  return cwd / ".lake" / "build" / "bin" / "lean-dag"
 
-def runWithLeanAnalyzer (action : IpcM α) : IO α := do
+def runWithLeanDag (action : IpcM α) : IO α := do
   let cwd ← IO.currentDir
-  let serverPath ← leanAnalyzerPath
+  let serverPath ← LeanDagPath
   let projectDir := cwd / testProjectPath
   Ipc.runWith "sh" #["-c",
     s!"cd {projectDir} && unset LEAN_PATH LEAN_SYSROOT && exec lake env sh -c 'LEAN_WORKER_PATH={serverPath} exec {serverPath}'"] action
@@ -111,7 +111,7 @@ def parseProofDag (json : Json) : Except String ProofDag :=
 
 /-- Get proof DAG at position. Line/col are 1-indexed (editor style). -/
 def getProofDagAt (uri : String) (sessionId : UInt64) (line col : Nat) (requestId : Nat) : IpcM (Option ProofDag) := do
-  let result ← callRpc requestId sessionId uri line col "LeanAnalyzer.getProofDag" (Json.mkObj [("mode", "tree")])
+  let result ← callRpc requestId sessionId uri line col "LeanDag.getProofDag" (Json.mkObj [("mode", "tree")])
   match parseProofDag result with
   | .ok dag => return some dag
   | .error _ => return none

@@ -1,12 +1,12 @@
 import Lean
 import Lean.Data.Lsp.Ipc
-import LeanAnalyzer
+import LeanDag
 import Tests.LspClient
 import Tests.Harness
 
 namespace Tests.RpcUnicode
 
-open Lean Lsp Ipc JsonRpc LeanAnalyzer Tests.LspClient Tests.Harness
+open Lean Lsp Ipc JsonRpc LeanDag Tests.LspClient Tests.Harness
 
 def unicodeFile : System.FilePath := testProjectPath / "Unicode.lean"
 
@@ -15,16 +15,11 @@ def unicodeFile : System.FilePath := testProjectPath / "Unicode.lean"
 unsafe def testUnicodeIdentifiers : IO Unit := do
   printSubsection "Unicode Identifiers (Greek Letters)"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "unicode" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile unicodeFile
 
-  unless ← unicodeFile.pathExists do
-    skipTest "unicode" "Unicode.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile unicodeFile
@@ -59,16 +54,11 @@ unsafe def testUnicodeIdentifiers : IO Unit := do
 unsafe def testUnicodeColumnPosition : IO Unit := do
   printSubsection "Unicode Column Positions"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "unicode cols" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile unicodeFile
 
-  unless ← unicodeFile.pathExists do
-    skipTest "unicode cols" "Unicode.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile unicodeFile
@@ -99,16 +89,11 @@ unsafe def testUnicodeColumnPosition : IO Unit := do
 unsafe def testSubscriptCharacters : IO Unit := do
   printSubsection "Subscript Characters (x₁, x₂)"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "subscripts" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile unicodeFile
 
-  unless ← unicodeFile.pathExists do
-    skipTest "subscripts" "Unicode.lean not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile unicodeFile

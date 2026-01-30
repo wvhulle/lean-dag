@@ -7,13 +7,13 @@ import Tests.RpcTactics
 import Tests.RpcUnicode
 
 unsafe def main : IO Unit := do
-  IO.println "LeanAnalyzer Tests"
+  IO.println "LeanDag Tests"
 
   -- Unit tests (no external dependencies)
   Tests.UnitProofDag.runTests
   Tests.UnitProofState.runTests
 
-  -- RPC integration tests (require lean-analyzer binary)
+  -- RPC integration tests (require lean-dag binary)
   Tests.RpcBasic.runTests
   Tests.RpcProofDag.runTests
   Tests.RpcBoundary.runTests

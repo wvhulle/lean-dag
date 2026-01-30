@@ -4,7 +4,7 @@ import Lean.Meta.CollectMVars
 
 open Lean Elab Server
 
-namespace LeanAnalyzer.InfoTreeParser
+namespace LeanDag.InfoTreeParser
 
 /-! ## Tactic Substring Extraction -/
 
@@ -285,4 +285,4 @@ partial def visitNode (infoTree : InfoTree) (ctx : ContextInfo) (info : Info) (r
 partial def parseInfoTree (infoTree : InfoTree) :=
   infoTree.visitM (postNode := fun ctx info _ results => visitNode infoTree ctx info results)
 
-end LeanAnalyzer.InfoTreeParser
+end LeanDag.InfoTreeParser

@@ -12,16 +12,14 @@ def basicLeanFile : System.FilePath := testProjectPath / "Simple.lean"
 unsafe def testLspServerStartup : IO Unit := do
   IO.println "\n  [LSP: Server Startup]"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "server startup" s!"lean-analyzer not found at {analyzerPath}"
-    return
-  
-  runWithLeanAnalyzer do
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+
+  runWithLeanDag do
     let initResult ← initializeServer 0
     IO.println s!"  ✓ server initialized"
     IO.println s!"  ✓ capabilities: {(toJson initResult.capabilities).compress.take 100}..."
-    
+
     shutdown 1
     let exitCode ← waitForExit
     assertTrue "server exited cleanly" (exitCode == 0)
@@ -29,28 +27,23 @@ unsafe def testLspServerStartup : IO Unit := do
 unsafe def testLspOpenDocument : IO Unit := do
   IO.println "\n  [LSP: Open Document]"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "open document" "lean-analyzer not built"
-    return
-  
-  unless ← basicLeanFile.pathExists do
-    skipTest "open document" "Basic.lean not found"
-    return
-  
-  runWithLeanAnalyzer do
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile basicLeanFile
+
+  runWithLeanDag do
     let _ ← initializeServer 0
-    
+
     let content ← IO.FS.readFile basicLeanFile
     let uri ← fileUri basicLeanFile
-    
+
     openDocument uri content
     IO.println s!"  ✓ document opened: {uri}"
-    
+
     -- Wait for diagnostics to confirm file was processed
     waitForFileReady uri
     IO.println s!"  ✓ file elaborated"
-    
+
     shutdown 1
     let _ ← waitForExit
     IO.println s!"  ✓ document test complete"
@@ -58,27 +51,22 @@ unsafe def testLspOpenDocument : IO Unit := do
 unsafe def testLspRpcConnect : IO Unit := do
   IO.println "\n  [LSP: RPC Connect]"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "RPC connect" "lean-analyzer not built"
-    return
-  
-  unless ← basicLeanFile.pathExists do
-    skipTest "RPC connect" "Basic.lean not found"
-    return
-  
-  runWithLeanAnalyzer do
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile basicLeanFile
+
+  runWithLeanDag do
     let _ ← initializeServer 0
-    
+
     let content ← IO.FS.readFile basicLeanFile
     let uri ← fileUri basicLeanFile
-    
+
     openDocument uri content
     waitForFileReady uri
-    
+
     let sessionId ← connectRpcSession 2 uri
     IO.println s!"  ✓ RPC session connected: {sessionId}"
-    
+
     shutdown 3
     let _ ← waitForExit
     IO.println s!"  ✓ RPC connect test complete"
@@ -86,16 +74,11 @@ unsafe def testLspRpcConnect : IO Unit := do
 unsafe def testHover : IO Unit := do
   IO.println "\n  [LSP: Hover]"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "hover" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile basicLeanFile
 
-  unless ← basicLeanFile.pathExists do
-    skipTest "hover" "test file not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let root ← rootUri
     IO.println s!"  rootUri: {root}"
 
@@ -120,18 +103,13 @@ unsafe def testHover : IO Unit := do
     IO.println s!"  ✓ hover test complete"
 
 unsafe def testGetProofDagRpc : IO Unit := do
-  IO.println "\n  [LSP: LeanAnalyzer.getProofDag RPC]"
+  IO.println "\n  [LSP: LeanDag.getProofDag RPC]"
 
-  let analyzerPath ← leanAnalyzerPath
-  unless ← analyzerPath.pathExists do
-    skipTest "getProofDag RPC" "lean-analyzer not built"
-    return
+  let analyzerPath ← LeanDagPath
+  requireBinary analyzerPath
+  requireFile basicLeanFile
 
-  unless ← basicLeanFile.pathExists do
-    skipTest "getProofDag RPC" "test file not found"
-    return
-
-  runWithLeanAnalyzer do
+  runWithLeanDag do
     let _ ← initializeServer 0
 
     let content ← IO.FS.readFile basicLeanFile
@@ -142,9 +120,9 @@ unsafe def testGetProofDagRpc : IO Unit := do
 
     let sessionId ← connectRpcSession 2 uri
 
-    -- Call LeanAnalyzer.getProofDag at line 1, col 11 (1-indexed, on "simple_rfl")
-    let result ← callRpc 3 sessionId uri 1 11 "LeanAnalyzer.getProofDag" (Json.mkObj [("mode", "tree")])
-    IO.println s!"  ✓ LeanAnalyzer.getProofDag called"
+    -- Call LeanDag.getProofDag at line 1, col 11 (1-indexed, on "simple_rfl")
+    let result ← callRpc 3 sessionId uri 1 11 "LeanDag.getProofDag" (Json.mkObj [("mode", "tree")])
+    IO.println s!"  ✓ LeanDag.getProofDag called"
     IO.println s!"  Result (first 500 chars): {result.compress.take 500}"
 
     shutdown 4
@@ -156,13 +134,13 @@ unsafe def runTests : IO Unit := do
   IO.println "══════════════════════════════════════════════════════════════"
   IO.println "  RPC Basic Tests"
   IO.println "══════════════════════════════════════════════════════════════"
-  
+
   testLspServerStartup
   testLspOpenDocument
   testLspRpcConnect
   testHover
   testGetProofDagRpc
-  
+
   IO.println ""
   IO.println "  ✓ RPC basic tests passed"
 

@@ -43,16 +43,17 @@ structure GetProofDagResult where
 
 /-! ## Definition Name Extraction -/
 
-/-- Extract the definition name from the InfoTree by finding the enclosing command. -/
+/-- Extract the definition name from the InfoTree by finding the enclosing command.
+    Uses the same pattern as Lean's DocumentSymbol handler. -/
 def getDefinitionName (tree : InfoTree) : Option String :=
   let names := tree.collectNodesBottomUp fun _ctx i _cs acc =>
     match i with
     | .ofCommandInfo ci =>
-      if h : ci.stx.getNumArgs > 1 then
-        let arg := ci.stx[1]
-        let id := arg.getId
-        if id.isAnonymous then acc else id.toString :: acc
-      else acc
+      -- For declarations: stx[1][1] contains the declId
+      -- Pattern: `(declId|$id$[.{$ls,*}]?)` extracts the identifier
+      let declId := ci.stx.getArg 1 |>.getArg 1
+      let id := declId.getArg 0 |>.getId  -- First child of declId is the identifier
+      if id.isAnonymous then acc else id.toString :: acc
     | _ => acc
   names.head?
 

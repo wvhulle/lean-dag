@@ -100,12 +100,21 @@ def buildProofDag (steps : List ParsedStep) : ProofDag :=
   let nodes := stepsArray.mapIdx fun idx step =>
     let goalBefore := convertGoalInfo step.goalBefore
     let goalsAfter := step.goalsAfter.map convertGoalInfo
-    let hyps := step.goalBefore.hyps.map convertHypothesis |>.filter (·.name != "")
+    let hypsBefore := step.goalBefore.hyps.map convertHypothesis |>.filter (·.name != "")
+    -- Get hypotheses from first goal after tactic (if any), otherwise use before
+    let hypsAfter := match step.goalsAfter.head? with
+      | some g => g.hyps.map convertHypothesis |>.filter (·.name != "")
+      | none => hypsBefore
+    -- Compute new hypotheses: indices in hypsAfter for hyps not in hypsBefore
+    let hypIdsBefore : Std.HashSet String := Std.HashSet.ofList (hypsBefore.map (·.id))
+    let newHypotheses := hypsAfter.toArray.mapIdx (fun i h =>
+      if hypIdsBefore.contains h.id then none else some i.val) |>.toList.filterMap id
     { id := idx
       tactic := { text := step.tacticString, dependsOn := step.tacticDependsOn, theoremsUsed := step.theorems.map (·.name) }
       position := step.position.start
-      stateBefore := { goals := [goalBefore], hypotheses := hyps }
-      stateAfter := { goals := goalsAfter, hypotheses := hyps }
+      stateBefore := { goals := [goalBefore], hypotheses := hypsBefore }
+      stateAfter := { goals := goalsAfter, hypotheses := hypsAfter }
+      newHypotheses
       children := childrenOf[idx]?.getD []
       parent := parentOf[idx]?.join
       depth := depths[idx]?.getD 0 }
@@ -124,6 +133,7 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
   let doc ← RequestM.readDoc
   let utf8Pos := doc.meta.text.lspPosToUtf8Pos params.position
   IO.eprintln s!"[RPC] getProofDag mode={params.mode} pos={params.position} utf8={utf8Pos} uri={doc.meta.uri}"
+  IO.eprintln s!"[RPC] document version={doc.meta.version} headerSnap exists"
   RequestM.withWaitFindSnapAtPos params.position fun snap => do
     IO.eprintln s!"[RPC] snapshot found endPos={snap.endPos}"
     let text := doc.meta.text

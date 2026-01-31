@@ -52,7 +52,8 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
     | "single_tactic" =>
       match goalsAt? snap.infoTree text hoverPos with
       | r :: _ =>
-        let result ← parseTacticInfo snap.infoTree r.ctxInfo (.ofTacticInfo r.tacticInfo) [] ∅ true
+        let binderCache := buildBinderCache snap.infoTree text
+        let result ← parseTacticInfo r.ctxInfo (.ofTacticInfo r.tacticInfo) [] {} true snap.infoTree binderCache doc.meta.uri
         let definitionName := getDefinitionName snap.infoTree
         IO.eprintln s!"[RPC] single_tactic mode: {result.steps.length} steps, def={definitionName}"
         return { proofDag := buildProofDag result.steps params.position definitionName }

@@ -12,14 +12,14 @@ def convertGoalInfo (g : ParsedGoal) : GoalInfo where
   type := .plain g.type
   username := filterNameOpt g.username
   id := g.id.name.toString
-  gotoLocations := g.gotoLocations
+  gotoLocations := {}
 
 def convertHypothesis (h : ParsedHypothesis) : HypothesisInfo where
   name := filterName h.username
   type := .plain h.type
   value := h.value.map TaggedText.plain
   id := h.id
-  isProof := h.isProof == "proof"
+  isProof := h.isProof
   isInstance := false
   gotoLocations := h.gotoLocations
 

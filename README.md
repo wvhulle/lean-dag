@@ -18,26 +18,30 @@ lake test
 
 ```mermaid
 flowchart TB
-    subgraph Editor["Editor / TUI"]
-        spawn["Spawns lean-dag directly<br/>(no lake env wrapper needed)"]
-    end
+    Editor[Editor / TUI]
 
-    subgraph Watchdog["lean-dag (Watchdog)"]
+    subgraph LeanDag[lean-dag Worker]
         direction TB
-        init["On startup:<br/>1. Check LEAN_SYSROOT<br/>2. Discover via lake env printenv<br/>3. Initialize search path"]
-        spawnWorker["Spawns workers via LEAN_WORKER_PATH"]
-        init --> spawnWorker
+        Router{Request?}
+        LeanLSP[Lean LSP internals]
+        ProofDag[getProofDag RPC]
     end
 
-    subgraph Worker["lean-dag --worker"]
-        direction TB
-        lsp["Handles LSP requests<br/>(hover, completion, etc.)"]
-        rpc["Exposes RPC: LeanDag.getProofDag"]
-        pipeline["InfoTree → InfoTreeParser → DagBuilder → ProofDag"]
-        lsp --> rpc
-        rpc --> pipeline
+    subgraph Pipeline[Proof Extraction]
+        direction LR
+        InfoTree --> Parser[InfoTreeParser]
+        Parser --> Builder[DagBuilder]
+        Builder --> JSON[ProofDag JSON]
     end
 
-    Editor -->|"LSP over stdin/stdout"| Watchdog
-    Watchdog -->|"--worker"| Worker
+    Editor <-->|LSP| Router
+    Router -->|hover, completion, etc.| LeanLSP
+    Router -->|getProofDag| ProofDag
+    ProofDag --> Pipeline
 ```
+
+How it works:
+
+- `lean-dag` is a full Lean LSP server (watchdog + workers)
+- Standard LSP requests (hover, completion, diagnostics) are handled by Lean's built-in LSP
+- The custom `getProofDag` RPC extracts proof structure from Lean's InfoTree

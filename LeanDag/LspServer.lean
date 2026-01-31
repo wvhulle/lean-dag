@@ -63,15 +63,33 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
       IO.eprintln s!"[RPC] unknown mode: {params.mode}"
       return { proofDag := {} }
 
-builtin_initialize
-  try
-    Lean.Server.registerBuiltinRpcProcedure `LeanDag.getProofDag GetProofDagParams GetProofDagResult handleGetProofDag
-  catch e =>
-    IO.eprintln s!"[LeanDag] RPC registration failed: {e}"
+/-! ## RPC Registration -/
 
+/--
+Get proof DAG for the current position in a document.
+
+This RPC method is registered via `@[server_rpc_method]` for library mode
+(when users `import LeanDag` in their Lean files).
+-/
+@[server_rpc_method]
+def getProofDag (params : GetProofDagParams) : RequestM (RequestTask GetProofDagResult) :=
+  handleGetProofDag params
+
+/-! ## Standalone Binary Support
+
+When running as a standalone binary (lean-dag executable), the RPC method must be
+registered as a builtin procedure since the worker processes don't import LeanDag.
+-/
+
+builtin_initialize
+  Lean.Server.registerBuiltinRpcProcedure
+    `LeanDag.getProofDag GetProofDagParams GetProofDagResult handleGetProofDag
+
+/-- Entry point for running as a watchdog process (standalone binary mode). -/
 def watchdogMain (args : List String) : IO UInt32 :=
   Lean.Server.Watchdog.watchdogMain args
 
+/-- Entry point for running as a worker process (standalone binary mode). -/
 def workerMain (opts : Lean.Options := {}) : IO UInt32 :=
   Lean.Server.FileWorker.workerMain opts
 

@@ -1,76 +1,57 @@
 import LeanDag.Types
+import Std.Data.HashMap
+import Std.Data.HashSet
 
 namespace LeanDag
 
 /-! ## Diff Computation -/
 
-/-- Mark a hypothesis type with a diff tag. -/
-def HypothesisInfo.withDiffTag (h : HypothesisInfo) (tag : DiffTag) : HypothesisInfo :=
-  { h with type := h.type.withDiff tag }
+private def diffHypotheses (source target : List HypothesisInfo)
+    (changedTag : DiffTag) (missingTag : DiffTag) (markRemoved : Bool) : List HypothesisInfo :=
+  let targetIds := Std.HashSet.ofList (target.map (·.id))
+  let targetById : Std.HashMap String HypothesisInfo :=
+    target.foldl (init := {}) fun m h => m.insert h.id h
+  source.map fun h =>
+    if targetIds.contains h.id then
+      match targetById.get? h.id with
+      | some th =>
+        if h.type.toPlainText != th.type.toPlainText then
+          { h with type := h.type.withDiff changedTag }
+        else h
+      | none => h
+    else if markRemoved then
+      { h with isRemoved := true, type := h.type.withDiff missingTag }
+    else
+      { h with type := h.type.withDiff missingTag }
 
-/-- Mark a goal type with a diff tag. -/
-def GoalInfo.withDiffTag (g : GoalInfo) (tag : DiffTag) : GoalInfo :=
-  { g with type := g.type.withDiff tag }
+private def diffGoals (source target : List GoalInfo)
+    (changedTag : DiffTag) (missingTag : DiffTag) (markRemoved : Bool) : List GoalInfo :=
+  let targetIds := Std.HashSet.ofList (target.map (·.id))
+  let targetById : Std.HashMap String GoalInfo :=
+    target.foldl (init := {}) fun m g => m.insert g.id g
+  source.map fun g =>
+    if targetIds.contains g.id then
+      match targetById.get? g.id with
+      | some tg =>
+        if g.type.toPlainText != tg.type.toPlainText then
+          { g with type := g.type.withDiff changedTag }
+        else g
+      | none => g
+    else if markRemoved then
+      { g with isRemoved := true, type := g.type.withDiff missingTag }
+    else
+      { g with type := g.type.withDiff missingTag }
 
 /-- Compute diff for a "before" state by comparing with "after" state.
     Marks hypotheses/goals that will change or be deleted. -/
 def diffStateBefore (before after : ProofState) : ProofState :=
-  let afterHypIds := after.hypotheses.map (·.id) |>.toArray
-  let afterGoalIds := after.goals.map (·.id) |>.toArray
-  let diffedHyps := before.hypotheses.map fun h =>
-    if afterHypIds.contains h.id then
-      -- Check if type changed
-      let afterHyp := after.hypotheses.find? (·.id == h.id)
-      match afterHyp with
-      | some ah =>
-        if h.type.toPlainText != ah.type.toPlainText then
-          h.withDiffTag .willChange
-        else h
-      | none => h
-    else
-      -- Hypothesis will be deleted
-      { h with isRemoved := true, type := h.type.withDiff .willDelete }
-  let diffedGoals := before.goals.map fun g =>
-    if afterGoalIds.contains g.id then
-      let afterGoal := after.goals.find? (·.id == g.id)
-      match afterGoal with
-      | some ag =>
-        if g.type.toPlainText != ag.type.toPlainText then
-          g.withDiffTag .willChange
-        else g
-      | none => g
-    else
-      { g with isRemoved := true, type := g.type.withDiff .willDelete }
-  { hypotheses := diffedHyps, goals := diffedGoals }
+  { hypotheses := diffHypotheses before.hypotheses after.hypotheses .willChange .willDelete true
+    goals := diffGoals before.goals after.goals .willChange .willDelete true }
 
 /-- Compute diff for an "after" state by comparing with "before" state.
     Marks hypotheses/goals that changed or were inserted. -/
 def diffStateAfter (before after : ProofState) : ProofState :=
-  let beforeHypIds := before.hypotheses.map (·.id) |>.toArray
-  let beforeGoalIds := before.goals.map (·.id) |>.toArray
-  let diffedHyps := after.hypotheses.map fun h =>
-    if beforeHypIds.contains h.id then
-      let beforeHyp := before.hypotheses.find? (·.id == h.id)
-      match beforeHyp with
-      | some bh =>
-        if h.type.toPlainText != bh.type.toPlainText then
-          h.withDiffTag .wasChanged
-        else h
-      | none => h
-    else
-      -- New hypothesis was inserted
-      h.withDiffTag .wasInserted
-  let diffedGoals := after.goals.map fun g =>
-    if beforeGoalIds.contains g.id then
-      let beforeGoal := before.goals.find? (·.id == g.id)
-      match beforeGoal with
-      | some bg =>
-        if g.type.toPlainText != bg.type.toPlainText then
-          g.withDiffTag .wasChanged
-        else g
-      | none => g
-    else
-      g.withDiffTag .wasInserted
-  { hypotheses := diffedHyps, goals := diffedGoals }
+  { hypotheses := diffHypotheses after.hypotheses before.hypotheses .wasChanged .wasInserted false
+    goals := diffGoals after.goals before.goals .wasChanged .wasInserted false }
 
 end LeanDag

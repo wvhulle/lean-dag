@@ -46,7 +46,7 @@ where
   isEmptyBy (stx : Syntax) : Bool :=
     stx.getNumArgs == 2 && stx[0].isToken "by" && stx[1].getNumArgs == 1 && stx[1][0].isMissing
 
-/-! ## Theorem Extraction -/
+/-! ## Theorem Extraction (only for single_tactic mode) -/
 
 structure ArgumentInfo where
   name : String
@@ -149,7 +149,7 @@ structure ParsedHypothesis where
   type     : String
   value    : Option String
   id       : String
-  isProof  : String
+  isProof  : Bool := false
   gotoLocations : LeanDag.GotoLocations := {}
   deriving Inhabited, ToJson, FromJson
 
@@ -158,7 +158,6 @@ structure ParsedGoal where
   type     : String
   hyps     : List ParsedHypothesis
   id       : MVarId
-  gotoLocations : LeanDag.GotoLocations := {}
   deriving Inhabited, ToJson, FromJson
 
 instance : BEq ParsedGoal where beq g1 g2 := g1.id == g2.id
@@ -196,55 +195,52 @@ def findAssignedMVars (goalId : MVarId) (mctxAfter : MetavarContext) : MetaM (Li
   let (_, s) ← (Meta.collectMVars expr).run {}
   return s.result.toList
 
-def exprKind (expr : Expr) : MetaM String := do
-  if ← Meta.isProof expr then return "proof"
-  if (← Meta.inferType expr).isSort then return "universe"
-  return "data"
+/-! ## Binder Location Cache
 
-/-! ## Goto Location Resolution -/
+Build a cache of FVarId → source position once per InfoTree traversal,
+then use it for all hypothesis lookups. This avoids O(n²) tree searches.
+-/
 
-/-- Find the binder location for a free variable in the InfoTree.
-    Returns the source position where the variable was introduced. -/
-def findBinderLocation (infoTree : InfoTree) (fvarId : FVarId) (text : FileMap) : Option LeanDag.GotoLocation :=
-  let binderInfo? := infoTree.findInfo? fun
-    | .ofTermInfo { isBinder := true, expr := .fvar id .., .. } => id == fvarId
-    | _ => false
-  binderInfo?.bind fun info =>
-    info.range?.map fun range =>
-      let lspPos := text.utf8PosToLspPos range.start
-      { uri := "", position := lspPos }  -- URI will be filled in by caller
+/-- Cache mapping FVarId to its binder source position. -/
+abbrev BinderCache := Std.HashMap FVarId Lsp.Position
 
-def formatGoal (ctx : ContextInfo) (id : MVarId) (infoTree : InfoTree) (text : FileMap) (fileUri : String) : RequestM ParsedGoal := do
-  IO.eprintln s!"[goto] formatGoal: id={id.name}, fileUri={fileUri}"
+/-- Build binder location cache by traversing InfoTree once. -/
+def buildBinderCache (infoTree : InfoTree) (text : FileMap) : BinderCache :=
+  infoTree.foldInfo (init := {}) fun _ctx info cache =>
+    match info with
+    | .ofTermInfo { isBinder := true, expr := .fvar fvarId .., .. } =>
+      match info.range? with
+      | some range => cache.insert fvarId (text.utf8PosToLspPos range.start)
+      | none => cache
+    | _ => cache
+
+/-- Format a hypothesis with goto location from cache. -/
+def formatHypothesis (ppCtx : PPContext) (hypDecl : LocalDecl) (binderCache : BinderCache) (fileUri : String) : IO ParsedHypothesis := do
+  let type := (← ppExprWithInfos ppCtx hypDecl.type).fmt.pretty
+  let value ← hypDecl.value?.mapM fun v => do pure (← ppExprWithInfos ppCtx v).fmt.pretty
+  let gotoLocations : LeanDag.GotoLocations := match binderCache.get? hypDecl.fvarId with
+    | some pos => { definition := some { uri := fileUri, position := pos } }
+    | none => {}
+  return { username := hypDecl.userName.toString, type, value, id := hypDecl.fvarId.name.toString, gotoLocations }
+
+/-- Format goal with hypotheses using cached binder locations. -/
+def formatGoal (ctx : ContextInfo) (id : MVarId) (binderCache : BinderCache) (fileUri : String) : RequestM ParsedGoal := do
   let some decl := ctx.mctx.findDecl? id
     | throwThe RequestError ⟨.invalidParams, "goalNotFoundInMctx"⟩
   let lctx := decl.lctx.sanitizeNames.run' {options := {}}
   let ppCtx := ctx.toPPContext lctx
   let hyps ← lctx.foldrM (init := []) fun hypDecl acc => do
     if hypDecl.isAuxDecl || hypDecl.isImplementationDetail then return acc
-    let type := (← ppExprWithInfos ppCtx hypDecl.type).fmt.pretty
-    let value ← hypDecl.value?.mapM fun v => do pure (← ppExprWithInfos ppCtx v).fmt.pretty
-    let isProof ← ctx.runMetaM decl.lctx (exprKind hypDecl.toExpr)
-    -- Resolve goto location: binder location (where the hypothesis was introduced)
-    let binderLoc := findBinderLocation infoTree hypDecl.fvarId text
-    let gotoLocations : LeanDag.GotoLocations := {
-      definition := binderLoc.map fun loc => { loc with uri := fileUri }
-      typeDef := none
-    }
-    IO.eprintln s!"[goto] hyp {hypDecl.userName}: binderLoc={gotoLocations.definition.isSome}"
-    return { username := hypDecl.userName.toString, type, value, id := hypDecl.fvarId.name.toString, isProof, gotoLocations } :: acc
+    let hyp ← formatHypothesis ppCtx hypDecl binderCache fileUri
+    return hyp :: acc
   let type := (← ppExprWithInfos ppCtx decl.type).fmt.pretty
-  -- Goal goto location is handled by TUI using node position
-  return { username := decl.userName.toString, type, hyps, id, gotoLocations := {} }
+  return { username := decl.userName.toString, type, hyps, id }
 
 def filterUnassignedGoals (goals : List MVarId) (mctx : MetavarContext) : List MVarId :=
   goals.filter fun id =>
     (mctx.findDecl? id).isSome && !mctx.eAssignment.contains id && !mctx.dAssignment.contains id
 
-def computeGoalChanges (ctx : ContextInfo) (tInfo : Elab.TacticInfo) (infoTree : InfoTree) : RequestM (List (List String × ParsedGoal × List ParsedGoal)) := do
-  let doc ← RequestM.readDoc
-  let text := doc.meta.text
-  let fileUri := doc.meta.uri
+def computeGoalChanges (ctx : ContextInfo) (tInfo : Elab.TacticInfo) (binderCache : BinderCache) (fileUri : String) : RequestM (List (List String × ParsedGoal × List ParsedGoal)) := do
   let goalMVars := tInfo.goalsBefore ++ tInfo.goalsAfter
   let ppCtx := { ctx with mctx := tInfo.mctxAfter }
   let goalsBefore := filterUnassignedGoals goalMVars tInfo.mctxBefore
@@ -256,8 +252,8 @@ def computeGoalChanges (ctx : ContextInfo) (tInfo : Elab.TacticInfo) (infoTree :
     let some goalDecl := tInfo.mctxBefore.findDecl? goalBefore | return none
     let assignedMVars ← ctx.runMetaM goalDecl.lctx (findAssignedMVars goalBefore tInfo.mctxAfter)
     let tacticDependsOn ← ctx.runMetaM goalDecl.lctx (findUsedHypotheses goalBefore goalDecl tInfo.mctxAfter)
-    let formattedBefore ← formatGoal ppCtx goalBefore infoTree text fileUri
-    let formattedAfter ← (uniqueAfter.filter assignedMVars.contains).mapM fun id => formatGoal ppCtx id infoTree text fileUri
+    let formattedBefore ← formatGoal ppCtx goalBefore binderCache fileUri
+    let formattedAfter ← (uniqueAfter.filter assignedMVars.contains).mapM fun id => formatGoal ppCtx id binderCache fileUri
     return some (tacticDependsOn, formattedBefore, formattedAfter)
 
 def formatRewriteSteps (stx : Syntax) (steps : List ParsedStep) : List ParsedStep :=
@@ -266,7 +262,7 @@ def formatRewriteSteps (stx : Syntax) (steps : List ParsedStep) : List ParsedSte
   | `(tactic| rewrite [$args,*] $(_)?) =>
     let rules := args.getElems.toList
     steps.zipWith (fun step rule =>
-      let ruleStr := rule.raw.getSubstring?.map (·.toString.trim) |>.getD step.tacticString
+      let ruleStr := rule.raw.getSubstring?.map (·.toString.trimAscii.toString) |>.getD step.tacticString
       { step with tacticString := s!"rw [{ruleStr}]" }) rules
   | _ => steps
 
@@ -276,7 +272,7 @@ def compareNameNum : Name → Name → Bool
   | _, _ => false
 
 def formatTacticString (s : String) : String :=
-  (s.splitOn "\n").headD "" |>.trim
+  (s.splitOn "\n").headD "" |>.trimAscii.toString
 
 def getSourceRange (sub : Substring.Raw) : RequestM SourceRange := do
   let text := (← RequestM.readDoc).meta.text
@@ -284,14 +280,14 @@ def getSourceRange (sub : Substring.Raw) : RequestM SourceRange := do
 
 /-! ## Main Parser -/
 
-partial def parseTacticInfo (infoTree : InfoTree) (ctx : ContextInfo) (info : Info) (steps : List ParsedStep) (allGoals : Std.HashSet ParsedGoal) (isSingleTacticMode : Bool) (forcedTacticString : String := "") : RequestM ParseResult := do
+partial def parseTacticInfo (ctx : ContextInfo) (info : Info) (steps : List ParsedStep) (allGoals : Std.HashSet ParsedGoal) (isSingleTacticMode : Bool) (infoTree : InfoTree) (binderCache : BinderCache) (fileUri : String) (forcedTacticString : String := "") : RequestM ParseResult := do
   let some ctx := info.updateContext? ctx | panic! "unexpected context node"
   let .ofTacticInfo tInfo := info | return { steps, allGoals }
   let some sub := getTacticSubstring tInfo | return { steps, allGoals }
   let tacticString := if forcedTacticString.isEmpty then formatTacticString sub.toString else forcedTacticString
   let steps := formatRewriteSteps tInfo.stx steps
   let position ← getSourceRange sub
-  let edges ← computeGoalChanges ctx tInfo infoTree
+  let edges ← computeGoalChanges ctx tInfo binderCache fileUri
   let currentGoals := edges.flatMap fun (_, g, gs) => g :: gs
   let allGoals := allGoals.insertMany currentGoals
   let stepGoals := steps.flatMap fun s => s.goalsAfter ++ s.spawnedGoals
@@ -304,13 +300,19 @@ partial def parseTacticInfo (infoTree : InfoTree) (ctx : ContextInfo) (info : In
     else some { tacticString, goalBefore, goalsAfter, tacticDependsOn := deps, spawnedGoals := orphanedGoals, position, theorems }
   return { steps := newSteps ++ steps, allGoals }
 
-partial def visitNode (infoTree : InfoTree) (ctx : ContextInfo) (info : Info) (results : List (Option ParseResult)) : RequestM ParseResult := do
+partial def visitNode (infoTree : InfoTree) (binderCache : BinderCache) (fileUri : String) (ctx : ContextInfo) (info : Info) (results : List (Option ParseResult)) : RequestM ParseResult := do
   let results := results.filterMap id
   let steps := results.flatMap (·.steps)
   let allGoals := Std.HashSet.ofList (results.flatMap (·.allGoals.toList))
-  parseTacticInfo infoTree ctx info steps allGoals false
+  parseTacticInfo ctx info steps allGoals false infoTree binderCache fileUri
 
-partial def parseInfoTree (infoTree : InfoTree) :=
-  infoTree.visitM (postNode := fun ctx info _ results => visitNode infoTree ctx info results)
+/-- Parse InfoTree with cached binder locations for efficient goto resolution. -/
+def parseInfoTree (infoTree : InfoTree) : RequestM (Option ParseResult) := do
+  let doc ← RequestM.readDoc
+  let text := doc.meta.text
+  let fileUri := doc.meta.uri
+  -- Build binder cache once for the entire tree
+  let binderCache := buildBinderCache infoTree text
+  infoTree.visitM (postNode := fun ctx info _ results => visitNode infoTree binderCache fileUri ctx info results)
 
 end LeanDag.InfoTreeParser

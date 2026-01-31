@@ -1,5 +1,6 @@
 import LeanDag.Types
 import LeanDag.LspServer
+import LeanDag.Environment
 
 /-!
 # LeanDag

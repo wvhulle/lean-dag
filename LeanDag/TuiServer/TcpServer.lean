@@ -61,10 +61,14 @@ def sendToClient (client : ClientConnection) (msg : Message) : IO Bool := do
 /-- Broadcast a message to all connected clients. -/
 def broadcast (srv : TcpServer) (msg : Message) : IO Unit := do
   let clients ← srv.clients.get
+  IO.eprintln s!"[TcpServer] Broadcasting to {clients.size} clients"
   let mut activeClients := #[]
   for client in clients do
     if ← sendToClient client msg then
+      IO.eprintln s!"[TcpServer] Sent to client {client.id}"
       activeClients := activeClients.push client
+    else
+      IO.eprintln s!"[TcpServer] Failed to send to client {client.id}"
   -- Update clients list, removing disconnected ones
   srv.clients.set activeClients
 

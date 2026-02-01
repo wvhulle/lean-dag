@@ -23,15 +23,37 @@ namespace LeanDag
 /-- Global reference to the TUI TCP server (if started). -/
 builtin_initialize tuiServerRef : IO.Ref (Option TcpServer) ← IO.mkRef none
 
-/-- Set the TUI server for broadcasting. -/
-def setTuiServer (srv : TcpServer) : IO Unit := tuiServerRef.set (some srv)
+/-- Default TCP port for TUI server. -/
+def defaultTcpPort : UInt16 := 9742
 
-/-- Get the TUI server if available. -/
-def getTuiServer : IO (Option TcpServer) := tuiServerRef.get
+/-- Get TCP port from environment or use default. -/
+def getTcpPort : IO UInt16 := do
+  if let some portStr ← IO.getEnv "LEAN_DAG_TCP_PORT" then
+    if let some n := portStr.toNat? then
+      if n > 0 && n < 65536 then
+        return n.toUInt16
+  return defaultTcpPort
+
+/-- Lazily start TCP server on first broadcast. -/
+def ensureTuiServer : IO (Option TcpServer) := do
+  match ← tuiServerRef.get with
+  | some srv => return some srv
+  | none =>
+    -- Try to start TCP server (may fail if port in use)
+    try
+      let port ← getTcpPort
+      let srv ← TcpServer.create port .library
+      srv.start
+      tuiServerRef.set (some srv)
+      IO.eprintln s!"[LeanDag] TCP server started on port {port}"
+      return some srv
+    catch e =>
+      IO.eprintln s!"[LeanDag] Failed to start TCP server: {e}"
+      return none
 
 /-- Broadcast proof DAG to TUI clients if server is running. -/
 def broadcastToTui (uri : String) (position : Lsp.Position) (proofDag : Option ProofDag) : IO Unit := do
-  if let some srv ← getTuiServer then
+  if let some srv ← ensureTuiServer then
     srv.broadcastProofDag uri position proofDag
 
 /-! ## RPC Types -/

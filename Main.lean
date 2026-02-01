@@ -38,21 +38,20 @@ def main (args : List String) : IO UInt32 := do
   IO.eprintln s!"[LeanDag] Current directory: {← IO.currentDir}"
   LeanDag.Environment.initEnvironment
 
-  -- Start TCP server by default (unless --no-tcp is specified)
-  unless hasFlagNoTcp args do
-    let port ← parseTcpPort args
-    IO.eprintln s!"[LeanDag] Starting TCP server on port {port}"
-    let srv ← TcpServer.create port .standalone
-    srv.start
-    LeanDag.setTuiServer srv
-
   let cleanArgs := filterTcpArgs args
   match cleanArgs with
   | "--worker" :: rest =>
-    -- Worker mode: for internal use by watchdog
+    -- Worker mode: for internal use by watchdog (no TCP server)
     IO.eprintln "[LeanDag] Starting as worker"
     LeanDag.workerMain
   | _ =>
-    -- Default: watchdog mode (LSP server that editors connect to)
+    -- Watchdog mode: LSP server that editors connect to
+    -- Start TCP server for TUI clients (unless --no-tcp is specified)
+    unless hasFlagNoTcp args do
+      let port ← parseTcpPort args
+      IO.eprintln s!"[LeanDag] Starting TCP server on port {port}"
+      let srv ← TcpServer.create port .standalone
+      srv.start
+      LeanDag.setTuiServer srv
     IO.eprintln "[LeanDag] Starting as watchdog (LSP server)"
     LeanDag.watchdogMain cleanArgs

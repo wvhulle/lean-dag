@@ -159,6 +159,27 @@ builtin_initialize
   Lean.Server.registerBuiltinRpcProcedure
     `LeanDag.getProofDag GetProofDagParams GetProofDagResult handleGetProofDag
 
+/-! ## Cursor Position Broadcasting
+
+Chain onto textDocument/hover to broadcast cursor position to TUI clients.
+This allows lean-tui view to know where the user's cursor is.
+-/
+
+/-- Broadcast cursor position when hover request is received. -/
+def broadcastCursorPosition (uri : String) (position : Lsp.Position) : IO Unit := do
+  logToFile s!"broadcastCursorPosition: uri={uri} pos={position}"
+  if let some srv ← tuiServerRef.get then
+    let cursorInfo : CursorInfo := { uri, position, method := "hover" }
+    srv.broadcast (.cursor cursorInfo)
+
+builtin_initialize
+  Lean.Server.chainLspRequestHandler "textDocument/hover" Lsp.HoverParams (Option Lsp.Hover)
+    fun params prevTask => do
+      let doc ← RequestM.readDoc
+      let uri := doc.meta.uri
+      broadcastCursorPosition uri params.position
+      return prevTask
+
 /-- Entry point for running as a watchdog process (standalone binary mode). -/
 def watchdogMain (args : List String) : IO UInt32 :=
   Lean.Server.Watchdog.watchdogMain args

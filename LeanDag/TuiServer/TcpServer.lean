@@ -129,7 +129,12 @@ def handleClient (srv : TcpServer) (client : ClientConnection) : Async Unit := d
           match cmd with
           | .navigate uri pos =>
             IO.eprintln s!"[TcpServer] Received navigate command from client {client.id}: {uri}:{pos.line}:{pos.character}"
-          -- TODO: Handle commands (e.g., navigate via LSP showDocument)
+            -- TODO: Handle navigate via LSP showDocument
+          | .getProofDag uri pos mode =>
+            IO.eprintln s!"[TcpServer] Received getProofDag command from client {client.id}: {uri}:{pos.line}:{pos.character} mode={mode}"
+            -- Note: In library mode, this command cannot be directly handled here
+            -- because we don't have access to the document context.
+            -- The lean-tui client should use its own RPC client instead.
         | .error e =>
           IO.eprintln s!"[TcpServer] Failed to parse command: {e}"
 

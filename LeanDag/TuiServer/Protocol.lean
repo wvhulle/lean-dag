@@ -91,12 +91,15 @@ instance : FromJson Message := ⟨Message.fromJson?⟩
 /-- Commands sent from TUI to server. -/
 inductive Command where
   | navigate (uri : String) (position : Lsp.Position)
+  | getProofDag (uri : String) (position : Lsp.Position) (mode : String)
   deriving Inhabited, BEq, Repr
 
 /-- Convert Command to JSON with tagged format matching Rust serde. -/
 def Command.toJson : Command → Json
   | .navigate uri position =>
     Json.mkObj [("type", "Navigate"), ("uri", uri), ("position", Lean.toJson position)]
+  | .getProofDag uri position mode =>
+    Json.mkObj [("type", "GetProofDag"), ("uri", uri), ("position", Lean.toJson position), ("mode", mode)]
 
 instance : ToJson Command := ⟨Command.toJson⟩
 
@@ -108,6 +111,11 @@ def Command.fromJson? (j : Json) : Except String Command := do
     let uri ← j.getObjValAs? String "uri"
     let position ← j.getObjValAs? Lsp.Position "position"
     return .navigate uri position
+  | "GetProofDag" =>
+    let uri ← j.getObjValAs? String "uri"
+    let position ← j.getObjValAs? Lsp.Position "position"
+    let mode ← j.getObjValAs? String "mode" <|> pure "tree"
+    return .getProofDag uri position mode
   | _ => throw s!"invalid Command type: {type}"
 
 instance : FromJson Command := ⟨Command.fromJson?⟩

@@ -32,14 +32,14 @@ unsafe def testUnicodeIdentifiers : IO Unit := do
 
     -- Unicode.lean line 5: "  rw [Nat.add_comm]" inside αβγ_test (1-indexed)
     -- The theorem name contains greek letters: theorem αβγ_test
-    let dag ← getProofDagAt uri sessionId 5 5 3
+    let dag ← getCompleteProofDagAt uri sessionId 5 5 3
 
     match dag with
     | some d =>
       assertTrue "unicode proof has nodes" (!d.nodes.isEmpty)
       -- Verify hypotheses with unicode names are handled
       for node in d.nodes do
-        for hyp in node.stateAfter.hypotheses do
+        for hyp in node.proof_state_after.hypotheses do
           assertTrue s!"hyp {hyp.name} has type" (!hyp.type.isEmpty)
       IO.println s!"  ✓ unicode proof returned {d.nodes.size} nodes"
     | none =>
@@ -105,14 +105,14 @@ unsafe def testSubscriptCharacters : IO Unit := do
     let sessionId ← connectRpcSession 2 uri
 
     -- Unicode.lean line 9: "  rw [Nat.add_comm]" inside sub_test (1-indexed)
-    let dag ← getProofDagAt uri sessionId 9 5 3
+    let dag ← getCompleteProofDagAt uri sessionId 9 5 3
 
     match dag with
     | some d =>
       assertTrue "subscript proof has nodes" (!d.nodes.isEmpty)
       -- Check that subscript variable names are preserved
       for node in d.nodes do
-        for hyp in node.stateAfter.hypotheses do
+        for hyp in node.proof_state_after.hypotheses do
           -- x₁ and x₂ should appear in hypothesis names or types
           IO.println s!"    hyp: {hyp.name} : {hyp.type}"
       IO.println s!"  ✓ subscript proof returned {d.nodes.size} nodes"

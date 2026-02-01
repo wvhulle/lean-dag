@@ -103,7 +103,7 @@ unsafe def testHover : IO Unit := do
     IO.println s!"  ✓ hover test complete"
 
 unsafe def testGetProofDagRpc : IO Unit := do
-  IO.println "\n  [LSP: LeanDag.getProofDag RPC]"
+  IO.println "\n  [LSP: LeanDag.getCompleteProofDag RPC]"
 
   let analyzerPath ← LeanDagPath
   requireBinary analyzerPath
@@ -120,9 +120,9 @@ unsafe def testGetProofDagRpc : IO Unit := do
 
     let sessionId ← connectRpcSession 2 uri
 
-    -- Call LeanDag.getProofDag at line 1, col 11 (1-indexed, on "simple_rfl")
-    let result ← callRpc 3 sessionId uri 1 11 "LeanDag.getProofDag" (Json.mkObj [("mode", "tree")])
-    IO.println s!"  ✓ LeanDag.getProofDag called"
+    -- Call LeanDag.getCompleteProofDag at line 1, col 11 (1-indexed, on "simple_rfl")
+    let result ← callRpc 3 sessionId uri 1 11 "LeanDag.getCompleteProofDag" (Json.mkObj [("mode", "tree")])
+    IO.println s!"  ✓ LeanDag.getCompleteProofDag called"
     IO.println s!"  Result (first 500 chars): {result.compress.take 500}"
 
     shutdown 4

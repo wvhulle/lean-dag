@@ -31,8 +31,8 @@ structure ClientConnection where
 
 /-- Cached state for newly connecting clients. Stores typed data instead of full Messages. -/
 structure CachedState where
-  cursor : Option CursorInfo := none
-  proofDag : Option (String × Lsp.Position × Option ProofDag) := none
+  cursor : Option EditorCursorPosition := none
+  proofDag : Option (String × Lsp.Position × Option CompleteProofDag) := none
 
 /-! ## TCP Server -/
 
@@ -45,7 +45,7 @@ structure TcpServer where
   /-- Next client ID counter. -/
   nextId : IO.Ref Nat
   /-- Server mode for RPC communication. -/
-  serverMode : ServerMode
+  serverMode : ServerOperatingMode
   /-- Port the server is listening on. -/
   port : UInt16
   /-- Cached state sent to newly connected clients. -/
@@ -54,7 +54,7 @@ structure TcpServer where
 namespace TcpServer
 
 /-- Create a new TCP server bound to the specified port. -/
-def create (port : UInt16) (serverMode : ServerMode := .standalone) : IO TcpServer := do
+def create (port : UInt16) (serverMode : ServerOperatingMode := .standalone) : IO TcpServer := do
   let server ← TCP.Socket.Server.mk
   let addr := SocketAddressV4.mk (IPv4Addr.ofParts 127 0 0 1) port
   server.bind addr
@@ -66,7 +66,7 @@ def create (port : UInt16) (serverMode : ServerMode := .standalone) : IO TcpServ
   return { server, clients, nextId, serverMode, port, cachedState }
 
 /-- Send a message to a single client. Returns false if send failed. -/
-def sendToClient (client : ClientConnection) (msg : Message) : IO Bool := do
+def sendToClient (client : ClientConnection) (msg : ServerToClientMessage) : IO Bool := do
   let json := Lean.toJson msg
   let line := json.compress ++ "\n"
   let bytes := line.toUTF8
@@ -77,7 +77,7 @@ def sendToClient (client : ClientConnection) (msg : Message) : IO Bool := do
     return false
 
 /-- Broadcast a message to all connected clients. -/
-def broadcast (srv : TcpServer) (msg : Message) : IO Unit := do
+def broadcast (srv : TcpServer) (msg : ServerToClientMessage) : IO Unit := do
   -- Cache typed data for newly connecting clients
   srv.cachedState.modify fun state =>
     match msg with
@@ -148,7 +148,7 @@ def handleClient (srv : TcpServer) (client : ClientConnection) : Async Unit := d
       break
     | some line =>
       if !line.isEmpty then
-        match Lean.Json.parse line >>= Command.fromJson? with
+        match Lean.Json.parse line >>= ClientToServerCommand.fromJson? with
         | .ok cmd =>
           match cmd with
           | .navigate uri pos =>

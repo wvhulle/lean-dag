@@ -32,7 +32,7 @@ unsafe def testTermModeProof : IO Unit := do
     let sessionId ← connectRpcSession 2 uri
 
     -- EdgeCases.lean line 4: "theorem term_mode_proof : 1 = 1 := rfl" (1-indexed)
-    let dag ← getProofDagAt uri sessionId 4 11 3
+    let dag ← getCompleteProofDagAt uri sessionId 4 11 3
 
     match dag with
     | some d =>
@@ -67,7 +67,7 @@ unsafe def testSorryProof : IO Unit := do
     let sessionId ← connectRpcSession 2 uri
 
     -- EdgeCases.lean line 7: "theorem sorry_proof : 2 = 2 := by sorry" (1-indexed)
-    let dag ← getProofDagAt uri sessionId 7 11 3
+    let dag ← getCompleteProofDagAt uri sessionId 7 11 3
 
     match dag with
     | some d =>
@@ -105,7 +105,7 @@ unsafe def testInvalidPosition : IO Unit := do
 
     -- Request at line 1001 (way beyond file, 1-indexed)
     -- Server gracefully handles this by returning the last valid snapshot
-    let dag ← getProofDagAt uri sessionId 1001 1 3
+    let dag ← getCompleteProofDagAt uri sessionId 1001 1 3
 
     match dag with
     | some d =>
@@ -139,7 +139,7 @@ unsafe def testWhitespacePosition : IO Unit := do
     let sessionId ← connectRpcSession 2 uri
 
     -- EdgeCases.lean line 1: "/-! # Edge Case Proofs..." comment (1-indexed)
-    let dag ← getProofDagAt uri sessionId 1 1 3
+    let dag ← getCompleteProofDagAt uri sessionId 1 1 3
 
     -- Should handle gracefully (empty or no DAG)
     match dag with

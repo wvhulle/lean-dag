@@ -32,7 +32,7 @@ unsafe def testNestedConv : IO Unit := do
     let sessionId ← connectRpcSession 2 uri
 
     -- EdgeCases.lean line 14: "  conv_lhs => rw [Nat.add_comm]" (1-indexed)
-    let dag ← getProofDagAt uri sessionId 14 5 3
+    let dag ← getCompleteProofDagAt uri sessionId 14 5 3
 
     match dag with
     | some d =>
@@ -68,7 +68,7 @@ unsafe def testCalcBlock : IO Unit := do
     let sessionId ← connectRpcSession 2 uri
 
     -- EdgeCases.lean line 20: "    _ = c + (a + b) := by rw [Nat.add_comm]" (1-indexed)
-    let dag ← getProofDagAt uri sessionId 20 30 3
+    let dag ← getCompleteProofDagAt uri sessionId 20 30 3
 
     match dag with
     | some d =>
@@ -103,7 +103,7 @@ unsafe def testMultipleRewrites : IO Unit := do
     let sessionId ← connectRpcSession 2 uri
 
     -- EdgeCases.lean line 32: "  rw [Nat.add_comm a b, Nat.add_comm]" (1-indexed)
-    let dag ← getProofDagAt uri sessionId 32 5 3
+    let dag ← getCompleteProofDagAt uri sessionId 32 5 3
 
     match dag with
     | some d =>
@@ -140,9 +140,9 @@ unsafe def testSessionReuse : IO Unit := do
     let sessionId ← connectRpcSession 2 uri
 
     -- Make multiple RPC calls on the same session (1-indexed positions)
-    let dag1 ← getProofDagAt uri sessionId 1 11 3
-    let dag2 ← getProofDagAt uri sessionId 1 11 4
-    let dag3 ← getProofDagAt uri sessionId 1 11 5
+    let dag1 ← getCompleteProofDagAt uri sessionId 1 11 3
+    let dag2 ← getCompleteProofDagAt uri sessionId 1 11 4
+    let dag3 ← getCompleteProofDagAt uri sessionId 1 11 5
 
     -- All should succeed
     assertTrue "first call succeeded" dag1.isSome
@@ -174,7 +174,7 @@ unsafe def testDeepNesting : IO Unit := do
     let sessionId ← connectRpcSession 2 uri
 
     -- EdgeCases.lean line 36: "  cases h with" (1-indexed)
-    let dag ← getProofDagAt uri sessionId 36 7 3
+    let dag ← getCompleteProofDagAt uri sessionId 36 7 3
 
     match dag with
     | some d =>
@@ -210,7 +210,7 @@ unsafe def testConstructorProof : IO Unit := do
     let sessionId ← connectRpcSession 2 uri
 
     -- EdgeCases.lean line 68: "  constructor" (1-indexed)
-    let dag ← getProofDagAt uri sessionId 68 5 3
+    let dag ← getCompleteProofDagAt uri sessionId 68 5 3
 
     match dag with
     | some d =>

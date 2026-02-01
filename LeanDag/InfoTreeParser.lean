@@ -2,6 +2,7 @@ import Lean
 import Lean.Meta.Basic
 import Lean.Meta.CollectMVars
 import LeanDag.Protocol
+import LeanDag.NameUtils
 
 open Lean Elab Server Lean.Elab
 
@@ -142,26 +143,21 @@ def getTheorems (infoTree : InfoTree) (tacticInfo : Elab.TacticInfo) (ctx : Cont
   ctx.runMetaM goalDecl.lctx do
     findTheoremsInRange infoTree sub.startPos sub.stopPos ctx goalDecl
 
-/-! ## Parsed Proof Types (intermediate representation) -/
+/-! ## Parsed Proof Types
 
-structure ParsedHypothesis where
-  username : String
-  type     : String
-  value    : Option String
-  id       : String
-  isProof  : Bool := false
-  gotoLocations : LeanDag.GotoLocations := {}
-  deriving Inhabited, ToJson, FromJson
+These types use the protocol types directly (ProofObligation, ProofContextHypothesis)
+but add MVarId for tracking goal identity during parsing.
+-/
 
+/-- A goal with its MVarId for tracking during parsing. -/
 structure ParsedGoal where
-  username : String
-  type     : String
-  hyps     : List ParsedHypothesis
-  id       : MVarId
-  deriving Inhabited, ToJson, FromJson
+  obligation : LeanDag.ProofObligation
+  hypotheses : List LeanDag.ProofContextHypothesis
+  mvarId : MVarId
+  deriving Inhabited
 
-instance : BEq ParsedGoal where beq g1 g2 := g1.id == g2.id
-instance : Hashable ParsedGoal where hash g := hash g.id
+instance : BEq ParsedGoal where beq g1 g2 := g1.mvarId == g2.mvarId
+instance : Hashable ParsedGoal where hash g := hash g.mvarId
 
 structure SourceRange where
   start : Lsp.Position
@@ -169,14 +165,14 @@ structure SourceRange where
   deriving Inhabited, ToJson, FromJson
 
 structure ParsedStep where
-  tacticString    : String
-  goalBefore      : ParsedGoal
-  goalsAfter      : List ParsedGoal
-  tacticDependsOn : List String
-  spawnedGoals    : List ParsedGoal
-  position        : SourceRange
-  theorems        : List TheoremSignature
-  deriving Inhabited, ToJson, FromJson
+  tacticString           : String
+  goalBefore             : ParsedGoal
+  goalsAfter             : List ParsedGoal
+  hypothesis_dependencies : List String
+  spawnedGoals           : List ParsedGoal
+  position               : SourceRange
+  theorems               : List TheoremSignature
+  deriving Inhabited
 
 structure ParseResult where
   steps    : List ParsedStep
@@ -184,9 +180,9 @@ structure ParseResult where
 
 /-- A single goal transformation from a tactic application. -/
 structure GoalChange where
-  tacticDependsOn : List String
-  goalBefore      : ParsedGoal
-  goalsAfter      : List ParsedGoal
+  hypothesis_dependencies : List String
+  goalBefore              : ParsedGoal
+  goalsAfter              : List ParsedGoal
   deriving Inhabited
 
 /-! ## Parsing Helpers -/
@@ -233,16 +229,25 @@ def buildBinderCache (infoTree : InfoTree) (text : FileMap) : BinderCache :=
       | none => cache
     | _ => cache
 
-/-- Format a hypothesis with goto location from cache. -/
-def formatHypothesis (ppCtx : PPContext) (hypDecl : LocalDecl) (binderCache : BinderCache) (fileUri : String) : IO ParsedHypothesis := do
-  let type := (← ppExprWithInfos ppCtx hypDecl.type).fmt.pretty
-  let value ← hypDecl.value?.mapM fun v => do pure (← ppExprWithInfos ppCtx v).fmt.pretty
-  let gotoLocations : LeanDag.GotoLocations := match binderCache.get? hypDecl.fvarId with
+/-- Format a hypothesis directly to ProofContextHypothesis. -/
+def formatHypothesis (ppCtx : PPContext) (hypDecl : LocalDecl) (binderCache : BinderCache) (fileUri : String)
+    : IO LeanDag.ProofContextHypothesis := do
+  let typeStr := (← ppExprWithInfos ppCtx hypDecl.type).fmt.pretty
+  let valueStr ← hypDecl.value?.mapM fun v => do pure (← ppExprWithInfos ppCtx v).fmt.pretty
+  let navigation_locations : LeanDag.PreresolvedNavigationTargets := match binderCache.get? hypDecl.fvarId with
     | some pos => { definition := some { uri := fileUri, position := pos } }
     | none => {}
-  return { username := hypDecl.userName.toString, type, value, id := hypDecl.fvarId.name.toString, gotoLocations }
+  return {
+    name := hypDecl.userName.toString.filterName
+    type := .plain typeStr
+    value := valueStr.map LeanDag.AnnotatedTextTree.plain
+    id := hypDecl.fvarId.name.toString
+    is_proof_term := hypDecl.type.isProp
+    is_typeclass_instance := false
+    navigation_locations
+  }
 
-/-- Format goal with hypotheses using cached binder locations. -/
+/-- Format goal directly to ParsedGoal with ProofObligation. -/
 def formatGoal (ctx : ContextInfo) (id : MVarId) (binderCache : BinderCache) (fileUri : String) : RequestM ParsedGoal := do
   let some decl := ctx.mctx.findDecl? id
     | throwThe RequestError ⟨.invalidParams, "goalNotFoundInMctx"⟩
@@ -252,8 +257,14 @@ def formatGoal (ctx : ContextInfo) (id : MVarId) (binderCache : BinderCache) (fi
     if hypDecl.isAuxDecl || hypDecl.isImplementationDetail then return acc
     let hyp ← formatHypothesis ppCtx hypDecl binderCache fileUri
     return hyp :: acc
-  let type := (← ppExprWithInfos ppCtx decl.type).fmt.pretty
-  return { username := decl.userName.toString, type, hyps, id }
+  let typeStr := (← ppExprWithInfos ppCtx decl.type).fmt.pretty
+  let obligation : LeanDag.ProofObligation := {
+    type := .plain typeStr
+    username := decl.userName.toString.filterNameOpt
+    id := id.name.toString
+    navigation_locations := {}
+  }
+  return { obligation, hypotheses := hyps, mvarId := id }
 
 def filterUnassignedGoals (goals : List MVarId) (mctx : MetavarContext) : List MVarId :=
   goals.filter fun id =>
@@ -271,11 +282,11 @@ def computeGoalChanges (pctx : ParserContext) (ctx : ContextInfo) (tInfo : Elab.
   uniqueBefore.filterMapM fun goalBefore => do
     let some goalDecl := tInfo.mctxBefore.findDecl? goalBefore | return none
     let assignedMVars ← ctx.runMetaM goalDecl.lctx (findAssignedMVars goalBefore tInfo.mctxAfter)
-    let tacticDependsOn ← ctx.runMetaM goalDecl.lctx (findUsedHypotheses goalBefore goalDecl tInfo.mctxAfter)
+    let hypothesis_dependencies ← ctx.runMetaM goalDecl.lctx (findUsedHypotheses goalBefore goalDecl tInfo.mctxAfter)
     let goalBefore ← formatGoal ppCtx goalBefore pctx.binderCache pctx.fileUri
     let goalsAfter ← (uniqueAfter.filter assignedMVars.contains).mapM fun id =>
       formatGoal ppCtx id pctx.binderCache pctx.fileUri
-    return some { tacticDependsOn, goalBefore, goalsAfter }
+    return some { hypothesis_dependencies, goalBefore, goalsAfter }
 
 def formatRewriteSteps (stx : Syntax) (steps : List ParsedStep) : List ParsedStep :=
   match stx with
@@ -314,7 +325,7 @@ partial def parseTacticInfo (pctx : ParserContext) (ctx : ContextInfo) (info : I
   let allGoals := acc.allGoals.insertMany currentGoals
   let stepGoals := steps.flatMap fun s => s.goalsAfter ++ s.spawnedGoals
   let orphanedGoals := currentGoals.foldl Std.HashSet.erase (stepGoals.foldl Std.HashSet.erase allGoals)
-    |>.toArray.insertionSort (compareNameNum ·.id.name ·.id.name) |>.toList
+    |>.toArray.insertionSort (compareNameNum ·.mvarId.name ·.mvarId.name) |>.toList
   let theorems ← match pctx.mode with
     | .singleTactic => getTheorems pctx.infoTree tInfo ctx
     | .full => pure []
@@ -322,7 +333,7 @@ partial def parseTacticInfo (pctx : ParserContext) (ctx : ContextInfo) (info : I
   let newSteps := changes.filterMap fun c =>
     if existingGoals.elem c.goalBefore then none
     else some { tacticString, goalBefore := c.goalBefore, goalsAfter := c.goalsAfter,
-                tacticDependsOn := c.tacticDependsOn, spawnedGoals := orphanedGoals, position, theorems }
+                hypothesis_dependencies := c.hypothesis_dependencies, spawnedGoals := orphanedGoals, position, theorems }
   return { steps := newSteps ++ steps, allGoals }
 
 partial def visitNode (pctx : ParserContext) (ctx : ContextInfo) (info : Info) (results : List (Option ParseResult))

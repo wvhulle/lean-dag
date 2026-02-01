@@ -11,17 +11,17 @@ open Lean Lsp Ipc JsonRpc LeanDag Tests.LspClient Tests.Harness
 def logicFile : System.FilePath := testProjectPath / "Logic.lean"
 def inductionFile : System.FilePath := testProjectPath / "Induction.lean"
 
-def parseProofDag (json : Json) : Except String ProofDag :=
+def parseProofDag (json : Json) : Except String CompleteProofDag :=
   match json.getObjVal? "proofDag" with
   | .ok dagJson => FromJson.fromJson? dagJson
   | .error e => .error s!"Missing proofDag field: {e}"
 
 /-- Get proof DAG at position. Line/col are 1-indexed (editor style). -/
-def getProofDagAt (uri : String) (sessionId : UInt64) (line col : Nat) (requestId : Nat) : IpcM ProofDag := do
-  let result ← callRpc requestId sessionId uri line col "LeanDag.getProofDag" (Json.mkObj [("mode", "tree")])
+def getProofDagAt (uri : String) (sessionId : UInt64) (line col : Nat) (requestId : Nat) : IpcM CompleteProofDag := do
+  let result ← callRpc requestId sessionId uri line col "LeanDag.getCompleteProofDag" (Json.mkObj [("mode", "tree")])
   match parseProofDag result with
   | .ok dag => return dag
-  | .error e => throw <| IO.userError s!"Failed to parse ProofDag: {e}"
+  | .error e => throw <| IO.userError s!"Failed to parse CompleteProofDag: {e}"
 
 unsafe def testLinearProofStructure : IO Unit := do
   printSubsection "Linear Proof - contrapositive"
@@ -47,11 +47,11 @@ unsafe def testLinearProofStructure : IO Unit := do
     -- Verify basic structure
     assertTrue "has nodes" (!dag.nodes.isEmpty)
     assertSome "has root" dag.root
-    assertSome "has currentNode" dag.currentNode
+    assertSome "has current_node_id" dag.current_node_id
 
     -- Verify initial state has the theorem goal
-    assertTrue "initialState has goal" (!dag.initialState.goals.isEmpty)
-    let initialGoal := dag.initialState.goals[0]!
+    assertTrue "initial_proof_state has goal" (!dag.initial_proof_state.goals.isEmpty)
+    let initialGoal := dag.initial_proof_state.goals[0]!
     assertTrue "initial goal has type" (!initialGoal.type.isEmpty)
     assertTrue "initial goal has id" (!initialGoal.id.isEmpty)
 
@@ -60,18 +60,18 @@ unsafe def testLinearProofStructure : IO Unit := do
       assertTrue s!"node {node.id} has tactic text" (!node.tactic.text.isEmpty)
       assertTrue s!"node {node.id} has position" (node.position.line ≥ 0)
 
-      -- stateBefore and stateAfter must exist
+      -- proof_state_before and proof_state_after must exist
       -- Goals in states must have required fields
-      for goal in node.stateBefore.goals do
-        assertTrue s!"node {node.id} stateBefore goal has type" (!goal.type.isEmpty)
-        assertTrue s!"node {node.id} stateBefore goal has id" (!goal.id.isEmpty)
+      for goal in node.proof_state_before.goals do
+        assertTrue s!"node {node.id} proof_state_before goal has type" (!goal.type.isEmpty)
+        assertTrue s!"node {node.id} proof_state_before goal has id" (!goal.id.isEmpty)
 
-      for goal in node.stateAfter.goals do
-        assertTrue s!"node {node.id} stateAfter goal has type" (!goal.type.isEmpty)
-        assertTrue s!"node {node.id} stateAfter goal has id" (!goal.id.isEmpty)
+      for goal in node.proof_state_after.goals do
+        assertTrue s!"node {node.id} proof_state_after goal has type" (!goal.type.isEmpty)
+        assertTrue s!"node {node.id} proof_state_after goal has id" (!goal.id.isEmpty)
 
       -- Hypotheses must have required fields
-      for hyp in node.stateBefore.hypotheses do
+      for hyp in node.proof_state_before.hypotheses do
         assertTrue s!"node {node.id} hyp has name" (!hyp.name.isEmpty)
         assertTrue s!"node {node.id} hyp has type" (!hyp.type.isEmpty)
         assertTrue s!"node {node.id} hyp has id" (!hyp.id.isEmpty)
@@ -143,7 +143,7 @@ unsafe def testInductionProofStructure : IO Unit := do
 
     -- Verify goal types are non-empty strings (not hygienic names)
     for node in dag.nodes do
-      for goal in node.stateAfter.goals do
+      for goal in node.proof_state_after.goals do
         -- username should be None or a visible name (filtered)
         if let some name := goal.username then
           assertTrue s!"goal username is visible" (!name.isEmpty && !containsSubstring name "._hyg.")
@@ -152,8 +152,8 @@ unsafe def testInductionProofStructure : IO Unit := do
     let _ ← waitForExit
     IO.println "  ✓ induction proof structure validated"
 
-unsafe def testGotoLocationsField : IO Unit := do
-  printSubsection "GotoLocations Field Present"
+unsafe def testNavigationLocationsField : IO Unit := do
+  printSubsection "NavigationLocations Field Present"
 
   let analyzerPath ← LeanDagPath
   requireBinary analyzerPath
@@ -173,22 +173,22 @@ unsafe def testGotoLocationsField : IO Unit := do
     -- Logic.lean line 4: "  intro hnq hp" (1-indexed)
     let dag ← getProofDagAt uri sessionId 4 5 3
 
-    -- Verify gotoLocations field exists in goals (even if empty)
-    for goal in dag.initialState.goals do
-      -- The field should exist (default value is empty GotoLocations)
+    -- Verify navigation_locations field exists in goals (even if empty)
+    for goal in dag.initial_proof_state.goals do
+      -- The field should exist (default value is empty)
       -- We just verify the structure is valid by accessing it
-      let _ := goal.gotoLocations
-      IO.println s!"  ✓ initialState goal has gotoLocations field"
+      let _ := goal.navigation_locations
+      IO.println s!"  ✓ initial_proof_state goal has navigation_locations field"
 
     for node in dag.nodes do
-      for goal in node.stateAfter.goals do
-        let _ := goal.gotoLocations
-      for hyp in node.stateAfter.hypotheses do
-        let _ := hyp.gotoLocations
+      for goal in node.proof_state_after.goals do
+        let _ := goal.navigation_locations
+      for hyp in node.proof_state_after.hypotheses do
+        let _ := hyp.navigation_locations
 
     shutdown 4
     let _ ← waitForExit
-    IO.println "  ✓ gotoLocations fields present"
+    IO.println "  ✓ navigation_locations fields present"
 
 unsafe def testUsernameFiltering : IO Unit := do
   printSubsection "Username Filtering"
@@ -214,7 +214,7 @@ unsafe def testUsernameFiltering : IO Unit := do
     let dag ← getProofDagAt uri sessionId 1 11 3
 
     -- Verify anonymous usernames are filtered to None
-    for goal in dag.initialState.goals do
+    for goal in dag.initial_proof_state.goals do
       if let some name := goal.username then
         assertTrue "username not [anonymous]" (name != "[anonymous]")
         assertTrue "username not hygienic" (!containsSubstring name "._hyg." && !containsSubstring name "._@.")
@@ -245,14 +245,14 @@ unsafe def testNewHypothesesIndices : IO Unit := do
     let dag ← getProofDagAt uri sessionId 4 5 3
 
     for node in dag.nodes do
-      -- newHypotheses indices must be valid
-      for idx in node.newHypotheses do
+      -- new_hypothesis_indices indices must be valid
+      for idx in node.new_hypothesis_indices do
         assertTrue s!"node {node.id} newHyp idx {idx} valid"
-          (idx < node.stateAfter.hypotheses.length)
+          (idx < node.proof_state_after.hypotheses.length)
 
     shutdown 4
     let _ ← waitForExit
-    IO.println "  ✓ newHypotheses indices valid"
+    IO.println "  ✓ new_hypothesis_indices indices valid"
 
 unsafe def testTacticInfoFields : IO Unit := do
   printSubsection "Tactic Info Fields"
@@ -279,11 +279,11 @@ unsafe def testTacticInfoFields : IO Unit := do
       -- tactic.text must be non-empty
       assertTrue s!"node {node.id} tactic text non-empty" (!node.tactic.text.isEmpty)
 
-      -- dependsOn should be a list (can be empty)
-      let _ := node.tactic.dependsOn
+      -- hypothesis_dependencies should be a list (can be empty)
+      let _ := node.tactic.hypothesis_dependencies
 
-      -- theoremsUsed should be a list (can be empty)
-      let _ := node.tactic.theoremsUsed
+      -- referenced_theorems should be a list (can be empty)
+      let _ := node.tactic.referenced_theorems
 
     shutdown 4
     let _ ← waitForExit
@@ -295,7 +295,7 @@ unsafe def runTests : IO Unit := do
   testLinearProofStructure
   testBranchingProofStructure
   testInductionProofStructure
-  testGotoLocationsField
+  testNavigationLocationsField
   testUsernameFiltering
   testNewHypothesesIndices
   testTacticInfoFields

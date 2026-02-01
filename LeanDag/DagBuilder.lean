@@ -1,7 +1,6 @@
 import Lean
 import LeanDag.Protocol
 import LeanDag.InfoTreeParser
-import LeanDag.Conversion
 import LeanDag.DiffComputation
 
 open Lean Elab
@@ -28,8 +27,8 @@ def getDefinitionName (tree : InfoTree) : Option String :=
 
 /-! ## DAG Building -/
 
-def ProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
-    (definitionName : Option String := none) : ProofDag :=
+def CompleteProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
+    (definitionName : Option String := none) : CompleteProofDag :=
   if steps.isEmpty then {} else
   let stepsArray := steps.toArray
   -- Build goal ID to step index map: which step produces which goals
@@ -39,11 +38,11 @@ def ProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
     for h : idx in [:stepsArray.size] do
       let step := stepsArray[idx]
       for goal in step.goalsAfter do
-        m := m.insert goal.id.name.toString idx
+        m := m.insert goal.mvarId.name.toString idx
     return m
   -- For each step, find parent (the step whose goalsAfter contains this step's goalBefore)
   let parentOf : Array (Option Nat) := stepsArray.map fun step =>
-    goalToProducer.get? step.goalBefore.id.name.toString
+    goalToProducer.get? step.goalBefore.mvarId.name.toString
   -- Compute children from parent relationships
   let childrenOf : Array (List Nat) := Id.run do
     let mut result : Array (List Nat) := stepsArray.map (fun _ => [])
@@ -71,16 +70,16 @@ def ProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
     return result
   -- Build nodes with computed relationships
   let nodes := stepsArray.mapIdx fun idx step =>
-    let goalBefore := step.goalBefore.toGoalInfo
-    let goalsAfter := step.goalsAfter.map (·.toGoalInfo)
-    let hypsBefore := step.goalBefore.hyps.map (·.toHypothesisInfo) |>.filter (·.name != "")
+    let goalBefore := step.goalBefore.obligation
+    let goalsAfter := step.goalsAfter.map (·.obligation)
+    let hypsBefore := step.goalBefore.hypotheses.filter (·.name != "")
     -- Get hypotheses from first goal after tactic (if any), otherwise use before
     let hypsAfter := match step.goalsAfter.head? with
-      | some g => g.hyps.map (·.toHypothesisInfo) |>.filter (·.name != "")
+      | some g => g.hypotheses.filter (·.name != "")
       | none => hypsBefore
     -- Compute new hypotheses: indices in hypsAfter for hyps not in hypsBefore
     let hypIdsBefore : Std.HashSet String := Std.HashSet.ofList (hypsBefore.map (·.id))
-    let newHypotheses := Id.run do
+    let new_hypothesis_indices := Id.run do
       let mut result : List Nat := []
       for h : i in [:hypsAfter.length] do
         let hyp := hypsAfter[i]!
@@ -88,17 +87,17 @@ def ProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
           result := result ++ [i]
       return result
     -- Build raw states (without diff)
-    let rawStateBefore : ProofState := { goals := [goalBefore], hypotheses := hypsBefore }
-    let rawStateAfter : ProofState := { goals := goalsAfter, hypotheses := hypsAfter }
-    -- Apply diff highlighting: stateBefore shows what will change, stateAfter shows what changed
-    let stateBefore := rawStateBefore.diffBefore rawStateAfter
-    let stateAfter := rawStateBefore.diffAfter rawStateAfter
+    let rawStateBefore : TacticProofState := { goals := [goalBefore], hypotheses := hypsBefore }
+    let rawStateAfter : TacticProofState := { goals := goalsAfter, hypotheses := hypsAfter }
+    -- Apply diff highlighting: proof_state_before shows what will change, proof_state_after shows what changed
+    let proof_state_before := rawStateBefore.diffBefore rawStateAfter
+    let proof_state_after := rawStateBefore.diffAfter rawStateAfter
     { id := idx
-      tactic := { text := step.tacticString, dependsOn := step.tacticDependsOn, theoremsUsed := step.theorems.map (·.name) }
+      tactic := { text := step.tacticString, hypothesis_dependencies := step.hypothesis_dependencies, referenced_theorems := step.theorems.map (·.name) }
       position := step.position.start
-      stateBefore
-      stateAfter
-      newHypotheses
+      proof_state_before
+      proof_state_after
+      new_hypothesis_indices
       children := childrenOf[idx]?.getD []
       parent := parentOf[idx]?.join
       depth := depths[idx]?.getD 0 }
@@ -110,11 +109,11 @@ def ProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
     | [] => (none, [])
     | r :: rest => (some r, rest)
   -- Find current node: the node whose position is closest to (but not after) cursor
-  let currentNode : Option Nat := Id.run do
+  let current_node_id : Option Nat := Id.run do
     let mut best : Option Nat := none
     let mut bestPos : Lsp.Position := ⟨0, 0⟩
     for h : i in [:nodes.size] do
-      let node : ProofDagNode := nodes[i]
+      let node : ProofDagTacticNode := nodes[i]
       let pos : Lsp.Position := node.position
       -- Node is at or before cursor position
       if pos.line < cursorPos.line || (pos.line == cursorPos.line && pos.character <= cursorPos.character) then
@@ -123,6 +122,6 @@ def ProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
           best := some node.id
           bestPos := pos
     return best
-  { nodes, root, orphans, currentNode, initialState := nodes[0]!.stateBefore, definitionName }
+  { nodes, root, orphans, current_node_id, initial_proof_state := nodes[0]!.proof_state_before, definition_name := definitionName }
 
 end LeanDag

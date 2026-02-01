@@ -110,14 +110,14 @@ structure GetProofDagParams where
   deriving FromJson, ToJson
 
 structure GetProofDagResult where
-  proofDag : ProofDag
+  proofDag : CompleteProofDag
   version  : Nat := 5
   deriving FromJson, ToJson
 
 /-! ## Proof DAG Computation -/
 
 /-- Compute proof DAG from snapshot. -/
-def computeProofDag (snap : Snapshot) (position : Lsp.Position) : RequestM (Option ProofDag) := do
+def computeProofDag (snap : Snapshot) (position : Lsp.Position) : RequestM (Option CompleteProofDag) := do
   let some result ← parseInfoTree snap.infoTree | return none
   let definitionName := getDefinitionName snap.infoTree
   return some (.build result.steps position definitionName)
@@ -135,7 +135,7 @@ def getProofDag (params : GetProofDagParams) : RequestM (RequestTask GetProofDag
 
 builtin_initialize
   Lean.Server.registerBuiltinRpcProcedure
-    `LeanDag.getProofDag GetProofDagParams GetProofDagResult getProofDag
+    `LeanDag.getCompleteProofDag GetProofDagParams GetProofDagResult getProofDag
 
 /-! ## Proof DAG Broadcasting
 
@@ -157,7 +157,7 @@ def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask 
   let some srv := srv? | return .pure ()
 
   -- Broadcast cursor position immediately
-  let cursorInfo : CursorInfo := { uri, position, method := "hover" }
+  let cursorInfo : EditorCursorPosition := { uri, position, method := "hover" }
   srv.broadcast (.cursor cursorInfo)
 
   -- Capture the server request emitter if not already captured

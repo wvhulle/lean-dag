@@ -25,10 +25,10 @@ private def DiffDirection.markRemoved : DiffDirection → Bool
   | .before => true
   | .after => false
 
-private def diffHypotheses (source target : List HypothesisInfo) (dir : DiffDirection)
-    : List HypothesisInfo :=
+private def diffHypotheses (source target : List ProofContextHypothesis) (dir : DiffDirection)
+    : List ProofContextHypothesis :=
   let targetIds := Std.HashSet.ofList (target.map (·.id))
-  let targetById : Std.HashMap String HypothesisInfo :=
+  let targetById : Std.HashMap String ProofContextHypothesis :=
     target.foldl (init := {}) fun m h => m.insert h.id h
   source.map fun h =>
     if targetIds.contains h.id then
@@ -39,13 +39,13 @@ private def diffHypotheses (source target : List HypothesisInfo) (dir : DiffDire
         else h
       | none => h
     else if dir.markRemoved then
-      { h with isRemoved := true, type := h.type.withDiff dir.missingTag }
+      { h with is_removed := true, type := h.type.withDiff dir.missingTag }
     else
       { h with type := h.type.withDiff dir.missingTag }
 
-private def diffGoals (source target : List GoalInfo) (dir : DiffDirection) : List GoalInfo :=
+private def diffGoals (source target : List ProofObligation) (dir : DiffDirection) : List ProofObligation :=
   let targetIds := Std.HashSet.ofList (target.map (·.id))
-  let targetById : Std.HashMap String GoalInfo :=
+  let targetById : Std.HashMap String ProofObligation :=
     target.foldl (init := {}) fun m g => m.insert g.id g
   source.map fun g =>
     if targetIds.contains g.id then
@@ -56,19 +56,19 @@ private def diffGoals (source target : List GoalInfo) (dir : DiffDirection) : Li
         else g
       | none => g
     else if dir.markRemoved then
-      { g with isRemoved := true, type := g.type.withDiff dir.missingTag }
+      { g with is_removed := true, type := g.type.withDiff dir.missingTag }
     else
       { g with type := g.type.withDiff dir.missingTag }
 
 /-- Compute diff for a "before" state by comparing with "after" state.
     Marks hypotheses/goals that will change or be deleted. -/
-def ProofState.diffBefore (before after : ProofState) : ProofState :=
+def TacticProofState.diffBefore (before after : TacticProofState) : TacticProofState :=
   { hypotheses := diffHypotheses before.hypotheses after.hypotheses .before
     goals := diffGoals before.goals after.goals .before }
 
 /-- Compute diff for an "after" state by comparing with "before" state.
     Marks hypotheses/goals that changed or were inserted. -/
-def ProofState.diffAfter (before after : ProofState) : ProofState :=
+def TacticProofState.diffAfter (before after : TacticProofState) : TacticProofState :=
   { hypotheses := diffHypotheses after.hypotheses before.hypotheses .after
     goals := diffGoals after.goals before.goals .after }
 

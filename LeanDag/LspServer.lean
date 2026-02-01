@@ -108,15 +108,6 @@ def ensureTuiServer : IO (Option TcpServer) := do
       IO.eprintln s!"[LeanDag] Failed to start TCP server: {e}"
       return none
 
-/-- Broadcast proof DAG to TUI clients if server is running. -/
-def broadcastToTui (uri : String) (position : Lsp.Position) (proofDag : Option ProofDag) : IO Unit := do
-  logToFile s!"broadcastToTui called: uri={uri} pos={position}"
-  if let some srv ← ensureTuiServer then
-    logToFile "Server found, broadcasting..."
-    srv.broadcastProofDag uri position proofDag
-  else
-    logToFile "No server available"
-
 /-! ## RPC Types -/
 
 structure GetProofDagParams where
@@ -135,7 +126,6 @@ structure GetProofDagResult where
 def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetProofDagResult) := do
   logToFile s!"handleGetProofDag called: mode={params.mode} pos={params.position}"
   let doc ← RequestM.readDoc
-  let uri : String := doc.meta.uri
   let utf8Pos := doc.meta.text.lspPosToUtf8Pos params.position
   IO.eprintln s!"[RPC] getProofDag mode={params.mode} pos={params.position} utf8={utf8Pos} uri={doc.meta.uri}"
   IO.eprintln s!"[RPC] document version={doc.meta.version} headerSnap exists"
@@ -150,12 +140,9 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
         let definitionName := getDefinitionName snap.infoTree
         IO.eprintln s!"[RPC] tree mode: {result.steps.length} steps, def={definitionName}"
         let proofDag := buildProofDag result.steps params.position definitionName
-        -- Broadcast to TUI clients
-        broadcastToTui uri params.position (some proofDag)
         return { proofDag }
       | none =>
         IO.eprintln "[RPC] tree mode: no result"
-        broadcastToTui uri params.position none
         return { proofDag := {} }
     | "single_tactic" =>
       match goalsAt? snap.infoTree text hoverPos with
@@ -165,16 +152,12 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
         let definitionName := getDefinitionName snap.infoTree
         IO.eprintln s!"[RPC] single_tactic mode: {result.steps.length} steps, def={definitionName}"
         let proofDag := buildProofDag result.steps params.position definitionName
-        -- Broadcast to TUI clients
-        broadcastToTui uri params.position (some proofDag)
         return { proofDag }
       | [] =>
         IO.eprintln "[RPC] single_tactic mode: no goals at position"
-        broadcastToTui uri params.position none
         return { proofDag := {} }
     | _ =>
       IO.eprintln s!"[RPC] unknown mode: {params.mode}"
-      broadcastToTui uri params.position none
       return { proofDag := {} }
 
 /-! ## RPC Registration -/

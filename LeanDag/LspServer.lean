@@ -200,6 +200,15 @@ builtin_initialize
       let _ ← rebroadcastProofDag
       return prevTask
 
+/-- Chain onto inlay hint request to rebroadcast after edits.
+This request is sent by the editor after document changes to update inlay hints. -/
+builtin_initialize
+  Lean.Server.chainLspRequestHandler "textDocument/inlayHint"
+    Lsp.InlayHintParams (Array Lsp.InlayHint)
+    fun _ prevTask => do
+      let _ ← rebroadcastProofDag
+      return prevTask
+
 /-- Entry point for running as a watchdog process (standalone binary mode). -/
 def watchdogMain (args : List String) : IO UInt32 :=
   Lean.Server.Watchdog.watchdogMain args

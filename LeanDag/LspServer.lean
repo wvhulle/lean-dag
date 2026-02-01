@@ -34,26 +34,24 @@ def getTcpPort : IO UInt16 := do
         return n.toUInt16
   return defaultTcpPort
 
-/-- Lazily start TCP server on first broadcast. -/
-def ensureTuiServer : IO (Option TcpServer) := do
-  match ← tuiServerRef.get with
-  | some srv => return some srv
-  | none =>
-    -- Try to start TCP server (may fail if port in use)
-    try
-      let port ← getTcpPort
-      let srv ← TcpServer.create port .library
-      srv.start
-      tuiServerRef.set (some srv)
-      IO.eprintln s!"[LeanDag] TCP server started on port {port}"
-      return some srv
-    catch e =>
-      IO.eprintln s!"[LeanDag] Failed to start TCP server: {e}"
-      return none
+/-- Start the TCP server for TUI clients. Called during initialization. -/
+def startTuiServer : IO Unit := do
+  try
+    let port ← getTcpPort
+    let srv ← TcpServer.create port .library
+    srv.start
+    tuiServerRef.set (some srv)
+    IO.eprintln s!"[LeanDag] TCP server started on port {port}"
+  catch e =>
+    IO.eprintln s!"[LeanDag] Failed to start TCP server: {e}"
+
+/-- Start TCP server when library is loaded. -/
+builtin_initialize do
+  startTuiServer
 
 /-- Broadcast proof DAG to TUI clients if server is running. -/
 def broadcastToTui (uri : String) (position : Lsp.Position) (proofDag : Option ProofDag) : IO Unit := do
-  if let some srv ← ensureTuiServer then
+  if let some srv ← tuiServerRef.get then
     srv.broadcastProofDag uri position proofDag
 
 /-! ## RPC Types -/

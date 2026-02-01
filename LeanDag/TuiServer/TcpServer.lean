@@ -12,6 +12,18 @@ open Std.Internal.IO.Async
 
 namespace LeanDag.TuiServer
 
+/-! ## Navigate Handler -/
+
+/-- Type for navigate handler callback. -/
+abbrev NavigateHandler := String → Lsp.Position → IO Unit
+
+/-- Global reference to the navigate handler (set by LspServer). -/
+builtin_initialize navigateHandlerRef : IO.Ref (Option NavigateHandler) ← IO.mkRef none
+
+/-- Set the navigate handler. Called from LspServer after capturing serverRequestEmitter. -/
+def setNavigateHandler (handler : NavigateHandler) : IO Unit :=
+  navigateHandlerRef.set (some handler)
+
 /-! ## Client Connection -/
 
 /-- A connected TUI client. -/
@@ -133,7 +145,11 @@ def handleClient (srv : TcpServer) (client : ClientConnection) : Async Unit := d
           match cmd with
           | .navigate uri pos =>
             IO.eprintln s!"[TcpServer] Received navigate command from client {client.id}: {uri}:{pos.line}:{pos.character}"
-            -- TODO: Handle navigate via LSP showDocument
+            -- Call the navigate handler if set
+            if let some handler ← navigateHandlerRef.get then
+              handler uri pos
+            else
+              IO.eprintln "[TcpServer] Navigate handler not set"
           | .getProofDag uri pos mode =>
             IO.eprintln s!"[TcpServer] Received getProofDag command from client {client.id}: {uri}:{pos.line}:{pos.character} mode={mode}"
             -- Note: In library mode, this command cannot be directly handled here

@@ -36,6 +36,46 @@ def logToFile (msg : String) : IO Unit := do
 /-- Global reference to the TUI TCP server (if started). -/
 builtin_initialize tuiServerRef : IO.Ref (Option TcpServer) ← IO.mkRef none
 
+/-! ## Server Request Emitter for Navigation -/
+
+/-- Type alias for server request emitter function. -/
+abbrev ServerRequestEmitterFn := String → Json → BaseIO (ServerTask (ServerRequestResponse Json))
+
+/-- Global reference to the server request emitter (captured from RequestM context). -/
+builtin_initialize serverRequestEmitterRef : IO.Ref (Option ServerRequestEmitterFn) ← IO.mkRef none
+
+/-- ShowDocumentParams for window/showDocument request. -/
+structure ShowDocumentParams where
+  uri : String
+  external : Option Bool := none
+  takeFocus : Option Bool := some true
+  selection : Option Lsp.Range := none
+  deriving ToJson, FromJson
+
+/-- ShowDocumentResult response. -/
+structure ShowDocumentResult where
+  success : Bool
+  deriving ToJson, FromJson
+
+/-- Send a showDocument request to the editor. -/
+def sendShowDocument (uri : String) (line : Nat) (character : Nat) : IO Unit := do
+  logToFile s!"sendShowDocument: uri={uri} line={line} char={character}"
+  match ← serverRequestEmitterRef.get with
+  | some emitter =>
+    let range : Lsp.Range := {
+      start := { line := line, character := character }
+      «end» := { line := line, character := character }
+    }
+    let params : ShowDocumentParams := {
+      uri := uri
+      takeFocus := some true
+      selection := some range
+    }
+    let _ ← emitter "window/showDocument" (toJson params)
+    logToFile "showDocument request sent"
+  | none =>
+    logToFile "No server request emitter available"
+
 /-- Default TCP port for TUI server. -/
 def defaultTcpPort : UInt16 := 9742
 
@@ -177,6 +217,14 @@ builtin_initialize
     fun params prevTask => do
       let doc ← RequestM.readDoc
       let uri := doc.meta.uri
+      -- Capture the server request emitter if not already captured
+      if (← serverRequestEmitterRef.get).isNone then
+        let ctx ← read
+        serverRequestEmitterRef.set (some ctx.serverRequestEmitter)
+        -- Also set the navigate handler
+        setNavigateHandler fun navUri navPos => do
+          sendShowDocument navUri navPos.line navPos.character
+        logToFile "Captured serverRequestEmitter and set navigate handler"
       broadcastCursorPosition uri params.position
       return prevTask
 

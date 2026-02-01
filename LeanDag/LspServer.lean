@@ -182,33 +182,50 @@ builtin_initialize
   Lean.Server.registerBuiltinRpcProcedure
     `LeanDag.getProofDag GetProofDagParams GetProofDagResult handleGetProofDag
 
-/-! ## Cursor Position Broadcasting
+/-! ## Proof DAG Broadcasting
 
-Chain onto textDocument/hover to broadcast cursor position to TUI clients.
-This allows lean-tui view to know where the user's cursor is.
+Chain onto textDocument/hover to compute and broadcast proof DAG to TUI clients.
+This uses the same worker that already has elaboration cached, avoiding redundant work.
 -/
 
-/-- Broadcast cursor position when hover request is received. -/
-def broadcastCursorPosition (uri : String) (position : Lsp.Position) : IO Unit := do
-  logToFile s!"broadcastCursorPosition: uri={uri} pos={position}"
-  if let some srv ← ensureTuiServer then
-    let cursorInfo : CursorInfo := { uri, position, method := "hover" }
-    srv.broadcast (.cursor cursorInfo)
+/-- Compute and broadcast proof DAG when hover request is received. -/
+def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask Unit) := do
+  let doc ← RequestM.readDoc
+  let uri := doc.meta.uri
+  let position := params.position
+  logToFile s!"broadcastProofDagOnHover: uri={uri} pos={position}"
+
+  -- Ensure TCP server is running and get reference
+  let srv? ← ensureTuiServer
+  let some srv := srv? | return .pure ()
+
+  -- Broadcast cursor position immediately
+  let cursorInfo : CursorInfo := { uri, position, method := "hover" }
+  srv.broadcast (.cursor cursorInfo)
+
+  -- Capture the server request emitter if not already captured
+  if (← serverRequestEmitterRef.get).isNone then
+    let ctx ← read
+    serverRequestEmitterRef.set (some ctx.serverRequestEmitter)
+    setNavigateHandler fun navUri navPos => do
+      sendShowDocument navUri navPos.line navPos.character
+    logToFile "Captured serverRequestEmitter and set navigate handler"
+
+  -- Compute and broadcast proof DAG using cached elaboration
+  RequestM.withWaitFindSnapAtPos position fun snap => do
+    match ← parseInfoTree snap.infoTree with
+    | some result =>
+      let definitionName := getDefinitionName snap.infoTree
+      let proofDag := buildProofDag result.steps position definitionName
+      logToFile s!"Broadcasting proof DAG: {result.steps.length} steps"
+      srv.broadcast (.proofDag uri position (some proofDag))
+    | none =>
+      srv.broadcast (.proofDag uri position none)
 
 builtin_initialize
   Lean.Server.chainLspRequestHandler "textDocument/hover" Lsp.HoverParams (Option Lsp.Hover)
     fun params prevTask => do
-      let doc ← RequestM.readDoc
-      let uri := doc.meta.uri
-      -- Capture the server request emitter if not already captured
-      if (← serverRequestEmitterRef.get).isNone then
-        let ctx ← read
-        serverRequestEmitterRef.set (some ctx.serverRequestEmitter)
-        -- Also set the navigate handler
-        setNavigateHandler fun navUri navPos => do
-          sendShowDocument navUri navPos.line navPos.character
-        logToFile "Captured serverRequestEmitter and set navigate handler"
-      broadcastCursorPosition uri params.position
+      let _ ← broadcastProofDagOnHover params
       return prevTask
 
 /-- Entry point for running as a watchdog process (standalone binary mode). -/

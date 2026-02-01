@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wvhulle/lean-dag/protocol-schema.json",
+  "title": "LeanDag TUI Protocol",
+  "description": "JSON protocol for communication between lean-dag and lean-tui over TCP (port 9742)",
+
+  "$defs": {
+    "Position": {
+      "type": "object",
+      "description": "LSP-style position (0-indexed line and character)",
+      "properties": {
+        "line": { "type": "integer", "minimum": 0 },
+        "character": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["line", "character"]
+    },
+
+    "ServerMode": {
+      "type": "string",
+      "enum": ["Library", "Standalone"],
+      "description": "Library: uses lake serve, requires import LeanDag. Standalone: uses lean-dag binary"
+    },
+
+    "DiffTag": {
+      "type": "string",
+      "enum": ["wasChanged", "willChange", "wasDeleted", "willDelete", "wasInserted", "willInsert"],
+      "description": "Diff status for before/after highlighting"
+    },
+
+    "SubexprInfo": {
+      "type": "object",
+      "properties": {
+        "diffStatus": { "$ref": "#/$defs/DiffTag" }
+      }
+    },
+
+    "TaggedText": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "text" },
+            "text": { "type": "string" }
+          },
+          "required": ["kind", "text"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "append" },
+            "items": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/TaggedText" }
+            }
+          },
+          "required": ["kind", "items"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "tag" },
+            "info": { "$ref": "#/$defs/SubexprInfo" },
+            "content": { "$ref": "#/$defs/TaggedText" }
+          },
+          "required": ["kind", "info", "content"]
+        }
+      ],
+      "description": "Rich text with optional diff annotations per subexpression"
+    },
+
+    "GotoLocation": {
+      "type": "object",
+      "properties": {
+        "uri": { "type": "string", "format": "uri" },
+        "position": { "$ref": "#/$defs/Position" }
+      },
+      "required": ["uri", "position"]
+    },
+
+    "GotoLocations": {
+      "type": "object",
+      "properties": {
+        "definition": { "$ref": "#/$defs/GotoLocation" },
+        "typeDef": { "$ref": "#/$defs/GotoLocation" }
+      },
+      "description": "Pre-resolved navigation locations"
+    },
+
+    "HypothesisInfo": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "User-visible name" },
+        "type": { "$ref": "#/$defs/TaggedText", "description": "Type expression with diff highlighting" },
+        "value": { "$ref": "#/$defs/TaggedText", "description": "Value for let-bindings" },
+        "id": { "type": "string", "description": "Internal ID for tracking" },
+        "isProof": { "type": "boolean", "default": false },
+        "isInstance": { "type": "boolean", "default": false },
+        "isRemoved": { "type": "boolean", "default": false, "description": "For diff display in before view" },
+        "gotoLocations": { "$ref": "#/$defs/GotoLocations" }
+      },
+      "required": ["name", "type", "id"]
+    },
+
+    "GoalInfo": {
+      "type": "object",
+      "properties": {
+        "type": { "$ref": "#/$defs/TaggedText", "description": "Goal type with diff highlighting" },
+        "username": { "type": "string", "description": "User-visible name (e.g., case inl)" },
+        "id": { "type": "string", "description": "Internal goal ID" },
+        "isRemoved": { "type": "boolean", "default": false },
+        "gotoLocations": { "$ref": "#/$defs/GotoLocations" }
+      },
+      "required": ["type", "id"]
+    },
+
+    "ProofState": {
+      "type": "object",
+      "properties": {
+        "goals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/GoalInfo" },
+          "default": []
+        },
+        "hypotheses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/HypothesisInfo" },
+          "default": []
+        }
+      },
+      "description": "Goals and hypotheses at a point in the proof"
+    },
+
+    "TacticInfo": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "description": "Tactic text (e.g., intro n)" },
+        "dependsOn": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Hypothesis names used by this tactic"
+        },
+        "theoremsUsed": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Theorem names referenced"
+        }
+      },
+      "required": ["text"]
+    },
+
+    "ProofDagNode": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer" },
+        "tactic": { "$ref": "#/$defs/TacticInfo" },
+        "position": { "$ref": "#/$defs/Position", "description": "Position in source file" },
+        "stateBefore": { "$ref": "#/$defs/ProofState" },
+        "stateAfter": { "$ref": "#/$defs/ProofState" },
+        "newHypotheses": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "default": [],
+          "description": "Indices into stateAfter.hypotheses for new hypotheses"
+        },
+        "children": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "default": [],
+          "description": "Child node IDs"
+        },
+        "parent": { "type": "integer", "description": "Parent node ID" },
+        "depth": { "type": "integer", "default": 0 },
+        "hasUnsolvedSpawnedGoals": { "type": "boolean", "default": false }
+      },
+      "required": ["id", "tactic", "position", "stateBefore", "stateAfter"]
+    },
+
+    "ProofDag": {
+      "type": "object",
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProofDagNode" },
+          "default": []
+        },
+        "root": { "type": "integer", "description": "Root node ID" },
+        "currentNode": { "type": "integer", "description": "Currently selected node" },
+        "initialState": { "$ref": "#/$defs/ProofState" },
+        "definitionName": { "type": "string" },
+        "orphans": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "default": [],
+          "description": "Node IDs without parents"
+        }
+      }
+    },
+
+    "CursorInfo": {
+      "type": "object",
+      "properties": {
+        "uri": { "type": "string", "format": "uri" },
+        "position": { "$ref": "#/$defs/Position" },
+        "method": { "type": "string", "description": "LSP method that triggered this (e.g., hover)" }
+      },
+      "required": ["uri", "position", "method"]
+    },
+
+    "Message": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "Connected" },
+            "server_mode": { "$ref": "#/$defs/ServerMode" }
+          },
+          "required": ["type"],
+          "description": "Sent when client connects"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "Cursor" },
+            "uri": { "type": "string", "format": "uri" },
+            "position": { "$ref": "#/$defs/Position" },
+            "method": { "type": "string" }
+          },
+          "required": ["type", "uri", "position", "method"],
+          "description": "Cursor position update"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "ProofDag" },
+            "uri": { "type": "string", "format": "uri" },
+            "position": { "$ref": "#/$defs/Position" },
+            "proof_dag": { "$ref": "#/$defs/ProofDag" }
+          },
+          "required": ["type", "uri", "position"],
+          "description": "Proof DAG at cursor position"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "Error" },
+            "error": { "type": "string" }
+          },
+          "required": ["type", "error"]
+        }
+      ],
+      "description": "Messages sent from lean-dag to lean-tui"
+    },
+
+    "Command": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "Navigate" },
+            "uri": { "type": "string", "format": "uri" },
+            "position": { "$ref": "#/$defs/Position" }
+          },
+          "required": ["type", "uri", "position"],
+          "description": "Request editor navigation to position"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "GetProofDag" },
+            "uri": { "type": "string", "format": "uri" },
+            "position": { "$ref": "#/$defs/Position" },
+            "mode": { "type": "string", "default": "tree" }
+          },
+          "required": ["type", "uri", "position"],
+          "description": "Request proof DAG (deprecated: DAG now sent automatically on hover)"
+        }
+      ],
+      "description": "Commands sent from lean-tui to lean-dag"
+    }
+  },
+
+  "type": "object",
+  "properties": {
+    "messages": {
+      "description": "Server → TUI messages (one JSON object per line)",
+      "$ref": "#/$defs/Message"
+    },
+    "commands": {
+      "description": "TUI → Server commands (one JSON object per line)",
+      "$ref": "#/$defs/Command"
+    }
+  }
+}

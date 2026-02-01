@@ -209,14 +209,6 @@ builtin_initialize
       let _ ← rebroadcastProofDag
       return prevTask
 
-/-- Chain onto definition request to rebroadcast on navigation. -/
-builtin_initialize
-  Lean.Server.chainLspRequestHandler "textDocument/definition"
-    Lsp.TextDocumentPositionParams (Array Lsp.LocationLink)
-    fun _ prevTask => do
-      let _ ← rebroadcastProofDag
-      return prevTask
-
 /-- Entry point for running as a watchdog process (standalone binary mode). -/
 def watchdogMain (args : List String) : IO UInt32 :=
   Lean.Server.Watchdog.watchdogMain args

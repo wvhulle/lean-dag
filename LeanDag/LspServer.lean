@@ -47,31 +47,31 @@ def getTcpPort : IO UInt16 := do
         return n.toUInt16
   return defaultTcpPort
 
-/-- Start the TCP server for TUI clients. Called during initialization. -/
-def startTuiServer : IO Unit := do
-  logToFile "startTuiServer called"
-  try
-    let port ← getTcpPort
-    logToFile s!"Creating TCP server on port {port}"
-    let srv ← TcpServer.create port .library
-    logToFile "TCP server created, starting..."
-    srv.start
-    tuiServerRef.set (some srv)
-    logToFile s!"TCP server started on port {port}"
-    IO.eprintln s!"[LeanDag] TCP server started on port {port}"
-  catch e =>
-    logToFile s!"Failed to start TCP server: {e}"
-    IO.eprintln s!"[LeanDag] Failed to start TCP server: {e}"
-
-/-- Start TCP server when library is loaded. -/
-builtin_initialize do
-  logToFile "builtin_initialize running"
-  startTuiServer
+/-- Lazily start the TCP server on first use. Returns the server if available. -/
+def ensureTuiServer : IO (Option TcpServer) := do
+  match ← tuiServerRef.get with
+  | some srv => return some srv
+  | none =>
+    logToFile "ensureTuiServer: starting TCP server lazily"
+    try
+      let port ← getTcpPort
+      logToFile s!"Creating TCP server on port {port}"
+      let srv ← TcpServer.create port .library
+      logToFile "TCP server created, starting..."
+      srv.start
+      tuiServerRef.set (some srv)
+      logToFile s!"TCP server started on port {port}"
+      IO.eprintln s!"[LeanDag] TCP server started on port {port}"
+      return some srv
+    catch e =>
+      logToFile s!"Failed to start TCP server: {e}"
+      IO.eprintln s!"[LeanDag] Failed to start TCP server: {e}"
+      return none
 
 /-- Broadcast proof DAG to TUI clients if server is running. -/
 def broadcastToTui (uri : String) (position : Lsp.Position) (proofDag : Option ProofDag) : IO Unit := do
   logToFile s!"broadcastToTui called: uri={uri} pos={position}"
-  if let some srv ← tuiServerRef.get then
+  if let some srv ← ensureTuiServer then
     logToFile "Server found, broadcasting..."
     srv.broadcastProofDag uri position proofDag
   else
@@ -168,7 +168,7 @@ This allows lean-tui view to know where the user's cursor is.
 /-- Broadcast cursor position when hover request is received. -/
 def broadcastCursorPosition (uri : String) (position : Lsp.Position) : IO Unit := do
   logToFile s!"broadcastCursorPosition: uri={uri} pos={position}"
-  if let some srv ← tuiServerRef.get then
+  if let some srv ← ensureTuiServer then
     let cursorInfo : CursorInfo := { uri, position, method := "hover" }
     srv.broadcast (.cursor cursorInfo)
 

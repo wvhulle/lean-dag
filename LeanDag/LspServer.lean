@@ -20,13 +20,18 @@ namespace LeanDag
 
 /-! ## Logging -/
 
+/-- Get current timestamp as ISO 8601 string. -/
+def getTimestamp : IO String := do
+  let output ← IO.Process.output { cmd := "date", args := #["-Iseconds"] }
+  return output.stdout.trimAscii.toString
+
 /-- Log a message to ~/.cache/lean-dag.log -/
 def logToFile (msg : String) : IO Unit := do
   let home ← IO.getEnv "HOME"
   let logPath := match home with
     | some h => s!"{h}/.cache/lean-dag.log"
     | none => "/tmp/lean-dag.log"
-  let timestamp ← IO.monoMsNow
+  let timestamp ← getTimestamp
   let line := s!"[{timestamp}] {msg}\n"
   let h ← IO.FS.Handle.mk logPath .append
   h.putStr line

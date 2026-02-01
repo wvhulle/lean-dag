@@ -15,34 +15,8 @@ The format of the RPC-JSON sent out by this RPC server method is documented in [
 
 ```mermaid
 flowchart TB
-    subgraph Clients
-        Editor[Editor]
-        TUI[lean-tui]
-    end
-
-    subgraph Worker[lean-dag Worker]
-        direction TB
-        Router{LSP Request}
-        LeanLSP[Lean LSP]
-        RPC[getProofDag RPC]
-        Broadcast[TCP Broadcast]
-    end
-
-    subgraph Pipeline[Proof Extraction]
-        direction LR
-        InfoTree[InfoTree]
-        Parser[InfoTreeParser]
-        Builder[DagBuilder]
-        JSON[ProofDag]
-    end
-
-    Editor <-->|LSP| Router
-    Router -->|hover, completion| LeanLSP
-    Router -->|getProofDag| RPC
-    Router -->|hover, plainGoal| Broadcast
-    RPC --> Pipeline
-    Broadcast --> Pipeline
-    Pipeline --> JSON
-    Broadcast <-->|TCP| TUI
-    TUI -.->|Navigate| Editor
+    Editor[Editor] <-->|LSP stdio| Server[lake serve + LeanDag]
+    Server -->|ProofDag JSON| TUI[lean-tui]
+    TUI -->|Navigate| Server
+    Server -->|window/showDocument| Editor
 ```

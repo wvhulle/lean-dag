@@ -172,7 +172,7 @@ structure ProofDagTacticNode where
 /-- Complete proof DAG structure. -/
 structure CompleteProofDag where
   nodes : Array ProofDagTacticNode := #[]
-  root : Option Nat := none
+  root_node_id : Option Nat := none
   current_node_id : Option Nat := none
   initial_proof_state : TacticProofState := {}
   definition_name : Option String := none
@@ -183,7 +183,7 @@ instance : BEq ProofDagTacticNode where
   beq a b := a.id == b.id
 
 instance : BEq CompleteProofDag where
-  beq a b := a.nodes.toList == b.nodes.toList && a.root == b.root && a.orphans == b.orphans
+  beq a b := a.nodes.toList == b.nodes.toList && a.root_node_id == b.root_node_id && a.orphans == b.orphans
 
 /-! ## Server Mode -/
 

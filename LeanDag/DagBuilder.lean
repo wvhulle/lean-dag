@@ -122,6 +122,6 @@ def CompleteProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
           best := some node.id
           bestPos := pos
     return best
-  { nodes, root, orphans, current_node_id, initial_proof_state := nodes[0]!.proof_state_before, definition_name := definitionName }
+  { nodes, root_node_id := root, orphans, current_node_id, initial_proof_state := nodes[0]!.proof_state_before, definition_name := definitionName }
 
 end LeanDag

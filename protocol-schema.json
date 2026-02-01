@@ -334,7 +334,7 @@
           "default": [],
           "description": "All nodes in the proof DAG. Nodes are ordered by their position in the source file, but the parent/child relationships define the logical tree structure."
         },
-        "root": {
+        "root_node_id": {
           "type": "integer",
           "description": "The node ID of the root tactic (first tactic in the proof). Null if the proof has no tactics (e.g., 'by rfl' or term-mode proofs)."
         },

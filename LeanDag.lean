@@ -1,6 +1,8 @@
 import LeanDag.Types
 import LeanDag.LspServer
 import LeanDag.Environment
+import LeanDag.TuiServer.Protocol
+import LeanDag.TuiServer.TcpServer
 
 /-!
 # LeanDag

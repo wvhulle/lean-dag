@@ -8,12 +8,31 @@ import LeanDag.NameUtils
 import LeanDag.Conversion
 import LeanDag.DiffComputation
 import LeanDag.DagBuilder
+import LeanDag.TuiServer.Protocol
+import LeanDag.TuiServer.TcpServer
 
 open Lean Elab Server Lsp JsonRpc
 open Lean.Server.FileWorker Lean.Server.Snapshots
 open LeanDag.InfoTreeParser
+open LeanDag.TuiServer
 
 namespace LeanDag
+
+/-! ## TUI Server Reference -/
+
+/-- Global reference to the TUI TCP server (if started). -/
+builtin_initialize tuiServerRef : IO.Ref (Option TcpServer) ← IO.mkRef none
+
+/-- Set the TUI server for broadcasting. -/
+def setTuiServer (srv : TcpServer) : IO Unit := tuiServerRef.set (some srv)
+
+/-- Get the TUI server if available. -/
+def getTuiServer : IO (Option TcpServer) := tuiServerRef.get
+
+/-- Broadcast proof DAG to TUI clients if server is running. -/
+def broadcastToTui (uri : String) (position : Lsp.Position) (proofDag : Option ProofDag) : IO Unit := do
+  if let some srv ← getTuiServer then
+    srv.broadcastProofDag uri position proofDag
 
 /-! ## RPC Types -/
 
@@ -32,6 +51,7 @@ structure GetProofDagResult where
 
 def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetProofDagResult) := do
   let doc ← RequestM.readDoc
+  let uri : String := doc.meta.uri
   let utf8Pos := doc.meta.text.lspPosToUtf8Pos params.position
   IO.eprintln s!"[RPC] getProofDag mode={params.mode} pos={params.position} utf8={utf8Pos} uri={doc.meta.uri}"
   IO.eprintln s!"[RPC] document version={doc.meta.version} headerSnap exists"
@@ -45,9 +65,13 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
       | some result =>
         let definitionName := getDefinitionName snap.infoTree
         IO.eprintln s!"[RPC] tree mode: {result.steps.length} steps, def={definitionName}"
-        return { proofDag := buildProofDag result.steps params.position definitionName }
+        let proofDag := buildProofDag result.steps params.position definitionName
+        -- Broadcast to TUI clients
+        broadcastToTui uri params.position (some proofDag)
+        return { proofDag }
       | none =>
         IO.eprintln "[RPC] tree mode: no result"
+        broadcastToTui uri params.position none
         return { proofDag := {} }
     | "single_tactic" =>
       match goalsAt? snap.infoTree text hoverPos with
@@ -56,12 +80,17 @@ def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetPr
         let result ← parseTacticInfo r.ctxInfo (.ofTacticInfo r.tacticInfo) [] {} true snap.infoTree binderCache doc.meta.uri
         let definitionName := getDefinitionName snap.infoTree
         IO.eprintln s!"[RPC] single_tactic mode: {result.steps.length} steps, def={definitionName}"
-        return { proofDag := buildProofDag result.steps params.position definitionName }
+        let proofDag := buildProofDag result.steps params.position definitionName
+        -- Broadcast to TUI clients
+        broadcastToTui uri params.position (some proofDag)
+        return { proofDag }
       | [] =>
         IO.eprintln "[RPC] single_tactic mode: no goals at position"
+        broadcastToTui uri params.position none
         return { proofDag := {} }
     | _ =>
       IO.eprintln s!"[RPC] unknown mode: {params.mode}"
+      broadcastToTui uri params.position none
       return { proofDag := {} }
 
 /-! ## RPC Registration -/

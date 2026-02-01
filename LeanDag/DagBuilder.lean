@@ -28,7 +28,7 @@ def getDefinitionName (tree : InfoTree) : Option String :=
 
 /-! ## DAG Building -/
 
-def buildProofDag (steps : List ParsedStep) (cursorPos : Lsp.Position)
+def ProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
     (definitionName : Option String := none) : ProofDag :=
   if steps.isEmpty then {} else
   let stepsArray := steps.toArray
@@ -71,12 +71,12 @@ def buildProofDag (steps : List ParsedStep) (cursorPos : Lsp.Position)
     return result
   -- Build nodes with computed relationships
   let nodes := stepsArray.mapIdx fun idx step =>
-    let goalBefore := convertGoalInfo step.goalBefore
-    let goalsAfter := step.goalsAfter.map convertGoalInfo
-    let hypsBefore := step.goalBefore.hyps.map convertHypothesis |>.filter (·.name != "")
+    let goalBefore := step.goalBefore.toGoalInfo
+    let goalsAfter := step.goalsAfter.map (·.toGoalInfo)
+    let hypsBefore := step.goalBefore.hyps.map (·.toHypothesisInfo) |>.filter (·.name != "")
     -- Get hypotheses from first goal after tactic (if any), otherwise use before
     let hypsAfter := match step.goalsAfter.head? with
-      | some g => g.hyps.map convertHypothesis |>.filter (·.name != "")
+      | some g => g.hyps.map (·.toHypothesisInfo) |>.filter (·.name != "")
       | none => hypsBefore
     -- Compute new hypotheses: indices in hypsAfter for hyps not in hypsBefore
     let hypIdsBefore : Std.HashSet String := Std.HashSet.ofList (hypsBefore.map (·.id))
@@ -91,8 +91,8 @@ def buildProofDag (steps : List ParsedStep) (cursorPos : Lsp.Position)
     let rawStateBefore : ProofState := { goals := [goalBefore], hypotheses := hypsBefore }
     let rawStateAfter : ProofState := { goals := goalsAfter, hypotheses := hypsAfter }
     -- Apply diff highlighting: stateBefore shows what will change, stateAfter shows what changed
-    let stateBefore := diffStateBefore rawStateBefore rawStateAfter
-    let stateAfter := diffStateAfter rawStateBefore rawStateAfter
+    let stateBefore := rawStateBefore.diffBefore rawStateAfter
+    let stateAfter := rawStateBefore.diffAfter rawStateAfter
     { id := idx
       tactic := { text := step.tacticString, dependsOn := step.tacticDependsOn, theoremsUsed := step.theorems.map (·.name) }
       position := step.position.start

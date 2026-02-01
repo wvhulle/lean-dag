@@ -118,11 +118,9 @@ structure GetProofDagResult where
 
 /-- Compute proof DAG from snapshot. -/
 def computeProofDag (snap : Snapshot) (position : Lsp.Position) : RequestM (Option ProofDag) := do
-  match ← parseInfoTree snap.infoTree with
-  | some result =>
-    let definitionName := getDefinitionName snap.infoTree
-    return some (buildProofDag result.steps position definitionName)
-  | none => return none
+  let some result ← parseInfoTree snap.infoTree | return none
+  let definitionName := getDefinitionName snap.infoTree
+  return some (.build result.steps position definitionName)
 
 /-! ## RPC Handler -/
 

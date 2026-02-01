@@ -1,20 +1,17 @@
-# LeanDag
+# Lean DAG
 
-An LSP server extension for Lean 4 that exposes proof structure via RPC.
+An RPC method extension for the built-in [Lean](https://lean-lang.org/) RPC server. You are supposed to import `LeanDag` in you `lakefile.toml` like this:
 
-## Build
-
-```bash
-lake build lean-dag
+```toml
+[[require]]
+name = "LeanDag"
+git = "https://github.com/wvhulle/lean-dag.git"
+rev = "main"
 ```
 
-## Test
+In combination with another front-end like [`lean-tui`](https://codeberg.org/wvhulle/lean-tui) you can use it to have a custom view on your proof state as a [directed acyclic graph (DAG)](https://en.wikipedia.org/wiki/Directed_acyclic_graph).
 
-```bash
-lake test
-```
-
-## How It Works
+The format of the RPC-JSON sent out by this RPC server method is documented in [./protocol-schema.json](./protocol-schema.json). It can be used for automatic code-generation of safe APIs (in Rust, JavaScript or other languages that support this).
 
 ```mermaid
 flowchart TB
@@ -49,9 +46,3 @@ flowchart TB
     Broadcast <-->|TCP| TUI
     TUI -.->|Navigate| Editor
 ```
-
-How it works:
-
-- `lean-dag` is a full Lean LSP server (watchdog + workers)
-- Standard LSP requests (hover, completion, diagnostics) are handled by Lean's built-in LSP
-- The custom `getProofDag` RPC extracts proof structure from Lean's InfoTree

@@ -2,25 +2,23 @@ import LeanDag.Protocol
 import LeanDag.NameUtils
 import LeanDag.InfoTreeParser
 
-namespace LeanDag
-
-open LeanDag.InfoTreeParser
+namespace LeanDag.InfoTreeParser
 
 /-! ## Conversion from Parsed Types to Output Types -/
 
-def convertGoalInfo (g : ParsedGoal) : GoalInfo where
+def ParsedGoal.toGoalInfo (g : ParsedGoal) : LeanDag.GoalInfo where
   type := .plain g.type
-  username := filterNameOpt g.username
+  username := g.username.filterNameOpt
   id := g.id.name.toString
   gotoLocations := {}
 
-def convertHypothesis (h : ParsedHypothesis) : HypothesisInfo where
-  name := filterName h.username
+def ParsedHypothesis.toHypothesisInfo (h : ParsedHypothesis) : LeanDag.HypothesisInfo where
+  name := h.username.filterName
   type := .plain h.type
-  value := h.value.map TaggedText.plain
+  value := h.value.map LeanDag.TaggedText.plain
   id := h.id
   isProof := h.isProof
   isInstance := false
   gotoLocations := h.gotoLocations
 
-end LeanDag
+end LeanDag.InfoTreeParser

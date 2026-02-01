@@ -18,6 +18,19 @@ open LeanDag.TuiServer
 
 namespace LeanDag
 
+/-! ## Logging -/
+
+/-- Log a message to ~/.cache/lean-dag.log -/
+def logToFile (msg : String) : IO Unit := do
+  let home ← IO.getEnv "HOME"
+  let logPath := match home with
+    | some h => s!"{h}/.cache/lean-dag.log"
+    | none => "/tmp/lean-dag.log"
+  let timestamp ← IO.monoMsNow
+  let line := s!"[{timestamp}] {msg}\n"
+  let h ← IO.FS.Handle.mk logPath .append
+  h.putStr line
+
 /-! ## TUI Server Reference -/
 
 /-- Global reference to the TUI TCP server (if started). -/
@@ -36,23 +49,33 @@ def getTcpPort : IO UInt16 := do
 
 /-- Start the TCP server for TUI clients. Called during initialization. -/
 def startTuiServer : IO Unit := do
+  logToFile "startTuiServer called"
   try
     let port ← getTcpPort
+    logToFile s!"Creating TCP server on port {port}"
     let srv ← TcpServer.create port .library
+    logToFile "TCP server created, starting..."
     srv.start
     tuiServerRef.set (some srv)
+    logToFile s!"TCP server started on port {port}"
     IO.eprintln s!"[LeanDag] TCP server started on port {port}"
   catch e =>
+    logToFile s!"Failed to start TCP server: {e}"
     IO.eprintln s!"[LeanDag] Failed to start TCP server: {e}"
 
 /-- Start TCP server when library is loaded. -/
 builtin_initialize do
+  logToFile "builtin_initialize running"
   startTuiServer
 
 /-- Broadcast proof DAG to TUI clients if server is running. -/
 def broadcastToTui (uri : String) (position : Lsp.Position) (proofDag : Option ProofDag) : IO Unit := do
+  logToFile s!"broadcastToTui called: uri={uri} pos={position}"
   if let some srv ← tuiServerRef.get then
+    logToFile "Server found, broadcasting..."
     srv.broadcastProofDag uri position proofDag
+  else
+    logToFile "No server available"
 
 /-! ## RPC Types -/
 
@@ -70,6 +93,7 @@ structure GetProofDagResult where
 /-! ## RPC Handler -/
 
 def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetProofDagResult) := do
+  logToFile s!"handleGetProofDag called: mode={params.mode} pos={params.position}"
   let doc ← RequestM.readDoc
   let uri : String := doc.meta.uri
   let utf8Pos := doc.meta.text.lspPosToUtf8Pos params.position

@@ -18,21 +18,17 @@ namespace LeanDag
 
 /-! ## Logging -/
 
-/-- Get current timestamp as ISO 8601 string. -/
-def getTimestamp : IO String := do
-  let output ← IO.Process.output { cmd := "date", args := #["-Iseconds"] }
-  return output.stdout.trimAscii.toString
+/-- Cached log file path (computed once). -/
+builtin_initialize logPathRef : IO.Ref String ← do
+  let home := (← IO.getEnv "HOME").getD "/tmp"
+  IO.mkRef s!"{home}/.cache/lean-dag.log"
 
-/-- Log a message to ~/.cache/lean-dag.log -/
+/-- Log a message with monotonic timestamp (no subprocess). -/
 def logToFile (msg : String) : IO Unit := do
-  let home ← IO.getEnv "HOME"
-  let logPath := match home with
-    | some h => s!"{h}/.cache/lean-dag.log"
-    | none => "/tmp/lean-dag.log"
-  let timestamp ← getTimestamp
-  let line := s!"[{timestamp}] {msg}\n"
-  let h ← IO.FS.Handle.mk logPath .append
-  h.putStr line
+  let path ← logPathRef.get
+  let ms ← IO.monoMsNow
+  let h ← IO.FS.Handle.mk path .append
+  h.putStr s!"[{ms}ms] {msg}\n"
 
 /-! ## TUI Server Reference -/
 
@@ -53,11 +49,6 @@ structure ShowDocumentParams where
   external : Option Bool := none
   takeFocus : Option Bool := some true
   selection : Option Lsp.Range := none
-  deriving ToJson, FromJson
-
-/-- ShowDocumentResult response. -/
-structure ShowDocumentResult where
-  success : Bool
   deriving ToJson, FromJson
 
 /-- Send a showDocument request to the editor. -/
@@ -124,66 +115,45 @@ structure GetProofDagResult where
   version  : Nat := 5
   deriving FromJson, ToJson
 
+/-! ## Proof DAG Computation -/
+
+/-- Compute proof DAG from snapshot in tree mode. -/
+def computeProofDagFromTree (snap : Snapshot) (position : Lsp.Position) : RequestM (Option ProofDag) := do
+  match ← parseInfoTree snap.infoTree with
+  | some result =>
+    let definitionName := getDefinitionName snap.infoTree
+    return some (buildProofDag result.steps position definitionName)
+  | none => return none
+
 /-! ## RPC Handler -/
 
-def handleGetProofDag (params : GetProofDagParams) : RequestM (RequestTask GetProofDagResult) := do
-  logToFile s!"handleGetProofDag called: mode={params.mode} pos={params.position}"
+@[server_rpc_method]
+def getProofDag (params : GetProofDagParams) : RequestM (RequestTask GetProofDagResult) := do
   let doc ← RequestM.readDoc
-  let utf8Pos := doc.meta.text.lspPosToUtf8Pos params.position
-  IO.eprintln s!"[RPC] getProofDag mode={params.mode} pos={params.position} utf8={utf8Pos} uri={doc.meta.uri}"
-  IO.eprintln s!"[RPC] document version={doc.meta.version} headerSnap exists"
   RequestM.withWaitFindSnapAtPos params.position fun snap => do
-    IO.eprintln s!"[RPC] snapshot found endPos={snap.endPos}"
     let text := doc.meta.text
     let hoverPos := text.lspPosToUtf8Pos params.position
     match params.mode with
     | "tree" =>
-      match ← parseInfoTree snap.infoTree with
-      | some result =>
-        let definitionName := getDefinitionName snap.infoTree
-        IO.eprintln s!"[RPC] tree mode: {result.steps.length} steps, def={definitionName}"
-        let proofDag := buildProofDag result.steps params.position definitionName
-        return { proofDag }
-      | none =>
-        IO.eprintln "[RPC] tree mode: no result"
-        return { proofDag := {} }
+      match ← computeProofDagFromTree snap params.position with
+      | some proofDag => return { proofDag }
+      | none => return { proofDag := {} }
     | "single_tactic" =>
       match goalsAt? snap.infoTree text hoverPos with
       | r :: _ =>
         let binderCache := buildBinderCache snap.infoTree text
         let result ← parseTacticInfo r.ctxInfo (.ofTacticInfo r.tacticInfo) [] {} true snap.infoTree binderCache doc.meta.uri
         let definitionName := getDefinitionName snap.infoTree
-        IO.eprintln s!"[RPC] single_tactic mode: {result.steps.length} steps, def={definitionName}"
         let proofDag := buildProofDag result.steps params.position definitionName
         return { proofDag }
-      | [] =>
-        IO.eprintln "[RPC] single_tactic mode: no goals at position"
-        return { proofDag := {} }
-    | _ =>
-      IO.eprintln s!"[RPC] unknown mode: {params.mode}"
-      return { proofDag := {} }
+      | [] => return { proofDag := {} }
+    | _ => return { proofDag := {} }
 
-/-! ## RPC Registration -/
-
-/--
-Get proof DAG for the current position in a document.
-
-This RPC method is registered via `@[server_rpc_method]` for library mode
-(when users `import LeanDag` in their Lean files).
--/
-@[server_rpc_method]
-def getProofDag (params : GetProofDagParams) : RequestM (RequestTask GetProofDagResult) :=
-  handleGetProofDag params
-
-/-! ## Standalone Binary Support
-
-When running as a standalone binary (lean-dag executable), the RPC method must be
-registered as a builtin procedure since the worker processes don't import LeanDag.
--/
+/-! ## Standalone Binary Support -/
 
 builtin_initialize
   Lean.Server.registerBuiltinRpcProcedure
-    `LeanDag.getProofDag GetProofDagParams GetProofDagResult handleGetProofDag
+    `LeanDag.getProofDag GetProofDagParams GetProofDagResult getProofDag
 
 /-! ## Proof DAG Broadcasting
 
@@ -216,14 +186,8 @@ def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask 
 
   -- Compute and broadcast proof DAG using cached elaboration
   RequestM.withWaitFindSnapAtPos position fun snap => do
-    match ← parseInfoTree snap.infoTree with
-    | some result =>
-      let definitionName := getDefinitionName snap.infoTree
-      let proofDag := buildProofDag result.steps position definitionName
-      logToFile s!"Broadcasting proof DAG: {result.steps.length} steps"
-      srv.broadcast (.proofDag uri position (some proofDag))
-    | none =>
-      srv.broadcast (.proofDag uri position none)
+    let proofDag ← computeProofDagFromTree snap position
+    srv.broadcast (.proofDag uri position proofDag)
 
 builtin_initialize
   Lean.Server.chainLspRequestHandler "textDocument/hover" Lsp.HoverParams (Option Lsp.Hover)

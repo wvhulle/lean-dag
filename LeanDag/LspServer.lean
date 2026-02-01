@@ -143,6 +143,20 @@ Chain onto textDocument/hover to compute and broadcast proof DAG to TUI clients.
 This uses the same worker that already has elaboration cached, avoiding redundant work.
 -/
 
+/-- Rebroadcast proof DAG at cached cursor position after document changes. -/
+def rebroadcastProofDag : RequestM (RequestTask Unit) := do
+  let some (uri, position) ← lastCursorRef.get | return .pure ()
+  let doc ← RequestM.readDoc
+  -- Only rebroadcast if same document
+  if doc.meta.uri != uri then return .pure ()
+
+  let srv? ← ensureTuiServer
+  let some srv := srv? | return .pure ()
+
+  RequestM.withWaitFindSnapAtPos position fun snap => do
+    let proofDag ← computeProofDag snap position
+    srv.broadcast (.proofDag uri position proofDag)
+
 /-- Compute and broadcast proof DAG when hover request is received. -/
 def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask Unit) := do
   let doc ← RequestM.readDoc
@@ -179,19 +193,14 @@ builtin_initialize
       let _ ← broadcastProofDagOnHover params
       return prevTask
 
-/-- Rebroadcast proof DAG at cached cursor position after document changes. -/
-def rebroadcastProofDag : RequestM (RequestTask Unit) := do
-  let some (uri, position) ← lastCursorRef.get | return .pure ()
-  let doc ← RequestM.readDoc
-  -- Only rebroadcast if same document
-  if doc.meta.uri != uri then return .pure ()
-
-  let srv? ← ensureTuiServer
-  let some srv := srv? | return .pure ()
-
-  RequestM.withWaitFindSnapAtPos position fun snap => do
-    let proofDag ← computeProofDag snap position
-    srv.broadcast (.proofDag uri position proofDag)
+/-- Chain onto documentColor request to rebroadcast after edits.
+This request is sent by the editor after document changes. -/
+builtin_initialize
+  Lean.Server.chainLspRequestHandler "textDocument/documentColor"
+    Lsp.DocumentColorParams (Array Lsp.ColorInformation)
+    fun _ prevTask => do
+      let _ ← rebroadcastProofDag
+      return prevTask
 
 builtin_initialize
   Lean.Server.chainLspRequestHandler "$/lean/plainGoal"
@@ -200,11 +209,10 @@ builtin_initialize
       let _ ← rebroadcastProofDag
       return prevTask
 
-/-- Chain onto inlay hint request to rebroadcast after edits.
-This request is sent by the editor after document changes to update inlay hints. -/
+/-- Chain onto definition request to rebroadcast on navigation. -/
 builtin_initialize
-  Lean.Server.chainLspRequestHandler "textDocument/inlayHint"
-    Lsp.InlayHintParams (Array Lsp.InlayHint)
+  Lean.Server.chainLspRequestHandler "textDocument/definition"
+    Lsp.TextDocumentPositionParams (Array Lsp.LocationLink)
     fun _ prevTask => do
       let _ ← rebroadcastProofDag
       return prevTask

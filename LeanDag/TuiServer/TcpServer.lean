@@ -45,6 +45,8 @@ structure TcpServer where
   serverMode : ServerMode
   /-- Port the server is listening on. -/
   port : UInt16
+  /-- Last proof DAG message (sent to newly connected clients). -/
+  lastProofDag : IO.Ref (Option Message)
 
 namespace TcpServer
 
@@ -56,8 +58,9 @@ def create (port : UInt16) (serverMode : ServerMode := .standalone) : IO TcpServ
   server.listen 16
   let clients ← IO.mkRef #[]
   let nextId ← IO.mkRef 0
+  let lastProofDag ← IO.mkRef none
   IO.eprintln s!"[TcpServer] Listening on 127.0.0.1:{port}"
-  return { server, clients, nextId, serverMode, port }
+  return { server, clients, nextId, serverMode, port, lastProofDag }
 
 /-- Send a message to a single client. Returns false if send failed. -/
 def sendToClient (client : ClientConnection) (msg : Message) : IO Bool := do
@@ -72,6 +75,9 @@ def sendToClient (client : ClientConnection) (msg : Message) : IO Bool := do
 
 /-- Broadcast a message to all connected clients. -/
 def broadcast (srv : TcpServer) (msg : Message) : IO Unit := do
+  -- Cache ProofDag messages for newly connecting clients
+  if let .proofDag .. := msg then
+    srv.lastProofDag.set (some msg)
   let clients ← srv.clients.get
   IO.eprintln s!"[TcpServer] Broadcasting to {clients.size} clients"
   let mut activeClients := #[]
@@ -127,9 +133,13 @@ partial def readLine (client : TCP.Socket.Client) (buffer : String := "") : Asyn
 def handleClient (srv : TcpServer) (client : ClientConnection) : Async Unit := do
   IO.eprintln s!"[TcpServer] Client {client.id} connected"
 
-  -- Send Connected message immediately
+  -- Send Connected message and last proof DAG immediately
   let _ ← IO.asTask do
     let _ ← sendToClient client (.connected (some srv.serverMode))
+    -- Send cached proof DAG so client doesn't need to wait for next hover
+    if let some dagMsg ← srv.lastProofDag.get then
+      IO.eprintln s!"[TcpServer] Sending cached proof DAG to client {client.id}"
+      let _ ← sendToClient client dagMsg
 
   -- Read loop for commands from client
   for _ in Lean.Loop.mk do

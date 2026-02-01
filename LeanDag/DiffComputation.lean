@@ -2,6 +2,8 @@ import LeanDag.Protocol
 import Std.Data.HashMap
 import Std.Data.HashSet
 
+open Lean.Widget (DiffTag)
+
 namespace LeanDag
 
 /-! ## Diff Computation -/

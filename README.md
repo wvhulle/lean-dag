@@ -18,26 +18,36 @@ lake test
 
 ```mermaid
 flowchart TB
-    Editor[Editor / TUI]
+    subgraph Clients
+        Editor[Editor]
+        TUI[lean-tui]
+    end
 
-    subgraph LeanDag[lean-dag Worker]
+    subgraph Worker[lean-dag Worker]
         direction TB
-        Router{Request?}
-        LeanLSP[Lean LSP internals]
-        ProofDag[getProofDag RPC]
+        Router{LSP Request}
+        LeanLSP[Lean LSP]
+        RPC[getProofDag RPC]
+        Broadcast[TCP Broadcast]
     end
 
     subgraph Pipeline[Proof Extraction]
         direction LR
-        InfoTree --> Parser[InfoTreeParser]
-        Parser --> Builder[DagBuilder]
-        Builder --> JSON[ProofDag JSON]
+        InfoTree[InfoTree]
+        Parser[InfoTreeParser]
+        Builder[DagBuilder]
+        JSON[ProofDag]
     end
 
     Editor <-->|LSP| Router
-    Router -->|hover, completion, etc.| LeanLSP
-    Router -->|getProofDag| ProofDag
-    ProofDag --> Pipeline
+    Router -->|hover, completion| LeanLSP
+    Router -->|getProofDag| RPC
+    Router -->|hover, plainGoal| Broadcast
+    RPC --> Pipeline
+    Broadcast --> Pipeline
+    Pipeline --> JSON
+    Broadcast <-->|TCP| TUI
+    TUI -.->|Navigate| Editor
 ```
 
 How it works:

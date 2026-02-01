@@ -1,41 +1,11 @@
 import Lean
 
 open Lean
+open Lean.Widget (DiffTag)
+
+deriving instance BEq, Repr for DiffTag
 
 namespace LeanDag
-
-/-! ## Diff Types (matching Lean.Widget.DiffTag) -/
-
-/-- A tag indicating the diff status of a subexpression. Matches Lean.Widget.DiffTag. -/
-inductive DiffTag where
-  | wasChanged   -- Subexpression was modified (in "before" view)
-  | willChange   -- Subexpression will be modified (in "after" view)
-  | wasDeleted   -- Subexpression was deleted (in "before" view)
-  | willDelete   -- Subexpression will be deleted (in "after" view)
-  | wasInserted  -- Subexpression was inserted (in "before" view)
-  | willInsert   -- Subexpression will be inserted (in "after" view)
-  deriving Inhabited, BEq, Repr
-
-instance : ToJson DiffTag where
-  toJson
-    | .wasChanged => "wasChanged"
-    | .willChange => "willChange"
-    | .wasDeleted => "wasDeleted"
-    | .willDelete => "willDelete"
-    | .wasInserted => "wasInserted"
-    | .willInsert => "willInsert"
-
-instance : FromJson DiffTag where
-  fromJson? j := do
-    let s ← j.getStr?
-    match s with
-    | "wasChanged" => pure .wasChanged
-    | "willChange" => pure .willChange
-    | "wasDeleted" => pure .wasDeleted
-    | "willDelete" => pure .willDelete
-    | "wasInserted" => pure .wasInserted
-    | "willInsert" => pure .willInsert
-    | _ => throw s!"invalid DiffTag: {s}"
 
 /-- Subexpression info with optional diff status. Simplified version of Lean.Widget.SubexprInfo. -/
 structure SubexprInfo where

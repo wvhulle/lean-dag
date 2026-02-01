@@ -48,12 +48,11 @@ def main (args : List String) : IO UInt32 := do
 
   let cleanArgs := filterTcpArgs args
   match cleanArgs with
-  | "--watchdog" :: rest =>
-    IO.eprintln "[LeanDag] Starting as watchdog"
-    LeanDag.watchdogMain rest
+  | "--worker" :: rest =>
+    -- Worker mode: for internal use by watchdog
+    IO.eprintln "[LeanDag] Starting as worker"
+    LeanDag.workerMain
   | _ =>
-    -- Default: direct worker mode (single-file, no watchdog overhead)
-    IO.eprintln "[LeanDag] Starting as worker (direct mode)"
-    let result ← LeanDag.workerMain
-    IO.eprintln s!"[LeanDag] Worker exited with: {result}"
-    return result
+    -- Default: watchdog mode (LSP server that editors connect to)
+    IO.eprintln "[LeanDag] Starting as watchdog (LSP server)"
+    LeanDag.watchdogMain cleanArgs

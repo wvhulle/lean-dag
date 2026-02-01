@@ -5,9 +5,6 @@ import Lean.Server.Requests
 import LeanDag.Protocol
 import LeanDag.TcpServer
 import LeanDag.InfoTreeParser
-import LeanDag.NameUtils
-import LeanDag.Conversion
-import LeanDag.DiffComputation
 import LeanDag.DagBuilder
 
 open Lean Elab Server Lsp JsonRpc
@@ -34,6 +31,9 @@ def logToFile (msg : String) : IO Unit := do
 
 /-- Global reference to the TUI TCP server (if started). -/
 builtin_initialize tuiServerRef : IO.Ref (Option TcpServer) ← IO.mkRef none
+
+/-- Cached cursor position for rebroadcasting after edits. -/
+builtin_initialize lastCursorRef : IO.Ref (Option (String × Lsp.Position)) ← IO.mkRef none
 
 /-! ## Server Request Emitter for Navigation -/
 
@@ -107,7 +107,6 @@ def ensureTuiServer : IO (Option TcpServer) := do
 structure GetProofDagParams where
   textDocument : TextDocumentIdentifier
   position     : Lsp.Position
-  mode         : String := "tree"
   deriving FromJson, ToJson
 
 structure GetProofDagResult where
@@ -117,8 +116,8 @@ structure GetProofDagResult where
 
 /-! ## Proof DAG Computation -/
 
-/-- Compute proof DAG from snapshot in tree mode. -/
-def computeProofDagFromTree (snap : Snapshot) (position : Lsp.Position) : RequestM (Option ProofDag) := do
+/-- Compute proof DAG from snapshot. -/
+def computeProofDag (snap : Snapshot) (position : Lsp.Position) : RequestM (Option ProofDag) := do
   match ← parseInfoTree snap.infoTree with
   | some result =>
     let definitionName := getDefinitionName snap.infoTree
@@ -129,25 +128,10 @@ def computeProofDagFromTree (snap : Snapshot) (position : Lsp.Position) : Reques
 
 @[server_rpc_method]
 def getProofDag (params : GetProofDagParams) : RequestM (RequestTask GetProofDagResult) := do
-  let doc ← RequestM.readDoc
   RequestM.withWaitFindSnapAtPos params.position fun snap => do
-    let text := doc.meta.text
-    let hoverPos := text.lspPosToUtf8Pos params.position
-    match params.mode with
-    | "tree" =>
-      match ← computeProofDagFromTree snap params.position with
-      | some proofDag => return { proofDag }
-      | none => return { proofDag := {} }
-    | "single_tactic" =>
-      match goalsAt? snap.infoTree text hoverPos with
-      | r :: _ =>
-        let binderCache := buildBinderCache snap.infoTree text
-        let result ← parseTacticInfo r.ctxInfo (.ofTacticInfo r.tacticInfo) [] {} true snap.infoTree binderCache doc.meta.uri
-        let definitionName := getDefinitionName snap.infoTree
-        let proofDag := buildProofDag result.steps params.position definitionName
-        return { proofDag }
-      | [] => return { proofDag := {} }
-    | _ => return { proofDag := {} }
+    match ← computeProofDag snap params.position with
+    | some proofDag => return { proofDag }
+    | none => return { proofDag := {} }
 
 /-! ## Standalone Binary Support -/
 
@@ -166,7 +150,9 @@ def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask 
   let doc ← RequestM.readDoc
   let uri := doc.meta.uri
   let position := params.position
-  logToFile s!"broadcastProofDagOnHover: uri={uri} pos={position}"
+
+  -- Cache cursor position for rebroadcast after edits
+  lastCursorRef.set (some (uri, position))
 
   -- Ensure TCP server is running and get reference
   let srv? ← ensureTuiServer
@@ -186,13 +172,34 @@ def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask 
 
   -- Compute and broadcast proof DAG using cached elaboration
   RequestM.withWaitFindSnapAtPos position fun snap => do
-    let proofDag ← computeProofDagFromTree snap position
+    let proofDag ← computeProofDag snap position
     srv.broadcast (.proofDag uri position proofDag)
 
 builtin_initialize
   Lean.Server.chainLspRequestHandler "textDocument/hover" Lsp.HoverParams (Option Lsp.Hover)
     fun params prevTask => do
       let _ ← broadcastProofDagOnHover params
+      return prevTask
+
+/-- Rebroadcast proof DAG at cached cursor position after document changes. -/
+def rebroadcastProofDag : RequestM (RequestTask Unit) := do
+  let some (uri, position) ← lastCursorRef.get | return .pure ()
+  let doc ← RequestM.readDoc
+  -- Only rebroadcast if same document
+  if doc.meta.uri != uri then return .pure ()
+
+  let srv? ← ensureTuiServer
+  let some srv := srv? | return .pure ()
+
+  RequestM.withWaitFindSnapAtPos position fun snap => do
+    let proofDag ← computeProofDag snap position
+    srv.broadcast (.proofDag uri position proofDag)
+
+builtin_initialize
+  Lean.Server.chainLspRequestHandler "$/lean/plainGoal"
+    Lsp.PlainGoalParams (Option Lsp.PlainGoal)
+    fun _ prevTask => do
+      let _ ← rebroadcastProofDag
       return prevTask
 
 /-- Entry point for running as a watchdog process (standalone binary mode). -/

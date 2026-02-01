@@ -1,7 +1,7 @@
 import Lean
 import Lean.Meta.Basic
 import Lean.Meta.CollectMVars
-import LeanDag.Types
+import LeanDag.Protocol
 
 open Lean Elab Server Lean.Elab
 

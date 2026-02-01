@@ -1,16 +1,12 @@
-/-
-Copyright (c) 2025 Willem Van Hulle. All rights reserved.
-Released under Apache 2.0 license as described in the file LICENSE.
--/
 import Lean
 import Std.Internal.Async
-import LeanDag.TuiServer.Protocol
+import LeanDag.Protocol
 
 open Lean
 open Std.Net
 open Std.Internal.IO.Async
 
-namespace LeanDag.TuiServer
+namespace LeanDag
 
 /-! ## Navigate Handler -/
 
@@ -31,6 +27,13 @@ structure ClientConnection where
   socket : TCP.Socket.Client
   id : Nat
 
+/-! ## Cached State -/
+
+/-- Cached state for newly connecting clients. Stores typed data instead of full Messages. -/
+structure CachedState where
+  cursor : Option CursorInfo := none
+  proofDag : Option (String × Lsp.Position × Option ProofDag) := none
+
 /-! ## TCP Server -/
 
 /-- TCP server that broadcasts messages to TUI clients. -/
@@ -45,10 +48,8 @@ structure TcpServer where
   serverMode : ServerMode
   /-- Port the server is listening on. -/
   port : UInt16
-  /-- Last cursor message (sent to newly connected clients). -/
-  lastCursor : IO.Ref (Option Message)
-  /-- Last proof DAG message (sent to newly connected clients). -/
-  lastProofDag : IO.Ref (Option Message)
+  /-- Cached state sent to newly connected clients. -/
+  cachedState : IO.Ref CachedState
 
 namespace TcpServer
 
@@ -60,10 +61,9 @@ def create (port : UInt16) (serverMode : ServerMode := .standalone) : IO TcpServ
   server.listen 16
   let clients ← IO.mkRef #[]
   let nextId ← IO.mkRef 0
-  let lastCursor ← IO.mkRef none
-  let lastProofDag ← IO.mkRef none
+  let cachedState ← IO.mkRef {}
   IO.eprintln s!"[TcpServer] Listening on 127.0.0.1:{port}"
-  return { server, clients, nextId, serverMode, port, lastCursor, lastProofDag }
+  return { server, clients, nextId, serverMode, port, cachedState }
 
 /-- Send a message to a single client. Returns false if send failed. -/
 def sendToClient (client : ClientConnection) (msg : Message) : IO Bool := do
@@ -78,11 +78,12 @@ def sendToClient (client : ClientConnection) (msg : Message) : IO Bool := do
 
 /-- Broadcast a message to all connected clients. -/
 def broadcast (srv : TcpServer) (msg : Message) : IO Unit := do
-  -- Cache messages for newly connecting clients
-  match msg with
-  | .cursor .. => srv.lastCursor.set (some msg)
-  | .proofDag .. => srv.lastProofDag.set (some msg)
-  | _ => pure ()
+  -- Cache typed data for newly connecting clients
+  srv.cachedState.modify fun state =>
+    match msg with
+    | .cursor info => { state with cursor := some info }
+    | .proofDag uri pos dag => { state with proofDag := some (uri, pos, dag) }
+    | _ => state
   let clients ← srv.clients.get
   IO.eprintln s!"[TcpServer] Broadcasting to {clients.size} clients"
   let mut activeClients := #[]
@@ -94,18 +95,6 @@ def broadcast (srv : TcpServer) (msg : Message) : IO Unit := do
       IO.eprintln s!"[TcpServer] Failed to send to client {client.id}"
   -- Update clients list, removing disconnected ones
   srv.clients.set activeClients
-
-/-- Broadcast proof DAG to all connected clients. -/
-def broadcastProofDag (srv : TcpServer) (uri : String) (position : Lsp.Position) (proofDag : Option ProofDag) : IO Unit :=
-  srv.broadcast (.proofDag uri position proofDag)
-
-/-- Broadcast cursor info to all connected clients. -/
-def broadcastCursor (srv : TcpServer) (info : CursorInfo) : IO Unit :=
-  srv.broadcast (.cursor info)
-
-/-- Broadcast error to all connected clients. -/
-def broadcastError (srv : TcpServer) (error : String) : IO Unit :=
-  srv.broadcast (.error error)
 
 /-- Find index of first newline in string, returns none if not found. -/
 def findNewlineIdx (s : String) : Option Nat := Id.run do
@@ -141,14 +130,14 @@ def handleClient (srv : TcpServer) (client : ClientConnection) : Async Unit := d
   -- Send Connected message and cached state immediately
   let _ ← IO.asTask do
     let _ ← sendToClient client (.connected (some srv.serverMode))
-    -- Send cached cursor so client knows the current position
-    if let some cursorMsg ← srv.lastCursor.get then
+    -- Send cached state to newly connected client
+    let state ← srv.cachedState.get
+    if let some info := state.cursor then
       IO.eprintln s!"[TcpServer] Sending cached cursor to client {client.id}"
-      let _ ← sendToClient client cursorMsg
-    -- Send cached proof DAG so client doesn't need to wait for next hover
-    if let some dagMsg ← srv.lastProofDag.get then
+      let _ ← sendToClient client (.cursor info)
+    if let some (uri, pos, dag) := state.proofDag then
       IO.eprintln s!"[TcpServer] Sending cached proof DAG to client {client.id}"
-      let _ ← sendToClient client dagMsg
+      let _ ← sendToClient client (.proofDag uri pos dag)
 
   -- Read loop for commands from client
   for _ in Lean.Loop.mk do
@@ -201,4 +190,4 @@ def start (srv : TcpServer) : IO Unit := do
 
 end TcpServer
 
-end LeanDag.TuiServer
+end LeanDag

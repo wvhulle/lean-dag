@@ -2,19 +2,17 @@ import Lean
 import Lean.Server.FileWorker
 import Lean.Server.Watchdog
 import Lean.Server.Requests
-import LeanDag.Types
+import LeanDag.Protocol
+import LeanDag.TcpServer
 import LeanDag.InfoTreeParser
 import LeanDag.NameUtils
 import LeanDag.Conversion
 import LeanDag.DiffComputation
 import LeanDag.DagBuilder
-import LeanDag.TuiServer.Protocol
-import LeanDag.TuiServer.TcpServer
 
 open Lean Elab Server Lsp JsonRpc
 open Lean.Server.FileWorker Lean.Server.Snapshots
 open LeanDag.InfoTreeParser
-open LeanDag.TuiServer
 
 namespace LeanDag
 

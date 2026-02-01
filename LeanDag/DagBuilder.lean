@@ -1,5 +1,5 @@
 import Lean
-import LeanDag.Types
+import LeanDag.Protocol
 import LeanDag.InfoTreeParser
 import LeanDag.Conversion
 import LeanDag.DiffComputation

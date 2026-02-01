@@ -1,4 +1,4 @@
-import LeanDag.Types
+import LeanDag.Protocol
 import LeanDag.NameUtils
 import LeanDag.InfoTreeParser
 

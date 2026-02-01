@@ -1,4 +1,4 @@
-import LeanDag.Types
+import LeanDag.Protocol
 import Std.Data.HashMap
 import Std.Data.HashSet
 

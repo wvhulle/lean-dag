@@ -45,6 +45,8 @@ structure TcpServer where
   serverMode : ServerMode
   /-- Port the server is listening on. -/
   port : UInt16
+  /-- Last cursor message (sent to newly connected clients). -/
+  lastCursor : IO.Ref (Option Message)
   /-- Last proof DAG message (sent to newly connected clients). -/
   lastProofDag : IO.Ref (Option Message)
 
@@ -58,9 +60,10 @@ def create (port : UInt16) (serverMode : ServerMode := .standalone) : IO TcpServ
   server.listen 16
   let clients ← IO.mkRef #[]
   let nextId ← IO.mkRef 0
+  let lastCursor ← IO.mkRef none
   let lastProofDag ← IO.mkRef none
   IO.eprintln s!"[TcpServer] Listening on 127.0.0.1:{port}"
-  return { server, clients, nextId, serverMode, port, lastProofDag }
+  return { server, clients, nextId, serverMode, port, lastCursor, lastProofDag }
 
 /-- Send a message to a single client. Returns false if send failed. -/
 def sendToClient (client : ClientConnection) (msg : Message) : IO Bool := do
@@ -75,9 +78,11 @@ def sendToClient (client : ClientConnection) (msg : Message) : IO Bool := do
 
 /-- Broadcast a message to all connected clients. -/
 def broadcast (srv : TcpServer) (msg : Message) : IO Unit := do
-  -- Cache ProofDag messages for newly connecting clients
-  if let .proofDag .. := msg then
-    srv.lastProofDag.set (some msg)
+  -- Cache messages for newly connecting clients
+  match msg with
+  | .cursor .. => srv.lastCursor.set (some msg)
+  | .proofDag .. => srv.lastProofDag.set (some msg)
+  | _ => pure ()
   let clients ← srv.clients.get
   IO.eprintln s!"[TcpServer] Broadcasting to {clients.size} clients"
   let mut activeClients := #[]
@@ -133,9 +138,13 @@ partial def readLine (client : TCP.Socket.Client) (buffer : String := "") : Asyn
 def handleClient (srv : TcpServer) (client : ClientConnection) : Async Unit := do
   IO.eprintln s!"[TcpServer] Client {client.id} connected"
 
-  -- Send Connected message and last proof DAG immediately
+  -- Send Connected message and cached state immediately
   let _ ← IO.asTask do
     let _ ← sendToClient client (.connected (some srv.serverMode))
+    -- Send cached cursor so client knows the current position
+    if let some cursorMsg ← srv.lastCursor.get then
+      IO.eprintln s!"[TcpServer] Sending cached cursor to client {client.id}"
+      let _ ← sendToClient client cursorMsg
     -- Send cached proof DAG so client doesn't need to wait for next hover
     if let some dagMsg ← srv.lastProofDag.get then
       IO.eprintln s!"[TcpServer] Sending cached proof DAG to client {client.id}"

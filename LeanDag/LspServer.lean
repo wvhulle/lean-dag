@@ -6,10 +6,12 @@ import LeanDag.Protocol
 import LeanDag.TcpServer
 import LeanDag.InfoTreeParser
 import LeanDag.DagBuilder
+import LeanDag.FunctionalDagBuilder
 
 open Lean Elab Server Lsp JsonRpc
 open Lean.Server.FileWorker Lean.Server.Snapshots
 open LeanDag.InfoTreeParser
+open LeanDag.FunctionalDagBuilder (computeFunctionalDag isTermModeTree)
 
 namespace LeanDag
 
@@ -154,8 +156,12 @@ def rebroadcastProofDag : RequestM (RequestTask Unit) := do
   let some srv := srv? | return .pure ()
 
   RequestM.withWaitFindSnapAtPos position fun snap => do
-    let proofDag ← computeProofDag snap position
-    srv.broadcast (.proofDag uri position proofDag)
+    if isTermModeTree snap.infoTree then
+      let functionalDag ← computeFunctionalDag snap position
+      srv.broadcast (.functionalDag uri position functionalDag)
+    else
+      let proofDag ← computeProofDag snap position
+      srv.broadcast (.proofDag uri position proofDag)
 
 /-- Compute and broadcast proof DAG when hover request is received. -/
 def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask Unit) := do
@@ -182,10 +188,15 @@ def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask 
       sendShowDocument navUri navPos.line navPos.character
     logToFile "Captured serverRequestEmitter and set navigate handler"
 
-  -- Compute and broadcast proof DAG using cached elaboration
+  -- Compute and broadcast DAG using cached elaboration
+  -- Try functional DAG for term-mode, fall back to proof DAG for tactic-mode
   RequestM.withWaitFindSnapAtPos position fun snap => do
-    let proofDag ← computeProofDag snap position
-    srv.broadcast (.proofDag uri position proofDag)
+    if isTermModeTree snap.infoTree then
+      let functionalDag ← computeFunctionalDag snap position
+      srv.broadcast (.functionalDag uri position functionalDag)
+    else
+      let proofDag ← computeProofDag snap position
+      srv.broadcast (.proofDag uri position proofDag)
 
 builtin_initialize
   Lean.Server.chainLspRequestHandler "textDocument/hover" Lsp.HoverParams (Option Lsp.Hover)

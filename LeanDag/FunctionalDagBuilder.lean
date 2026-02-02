@@ -233,15 +233,33 @@ def buildDag (steps : List ParsedTermStep) (position : Lsp.Position) (definition
 
 /-! ## Main Entry Point -/
 
-/-- Check if InfoTree contains term-mode code without enclosing tactic. -/
+/-- Check if a tactic is a user-visible tactic (not internal elaboration from `do` notation). -/
+def isUserTactic (tacticInfo : Elab.TacticInfo) : Bool :=
+  -- `do` notation generates synthetic tactics with specific stx kinds
+  -- User-visible tactics have meaningful syntax nodes
+  match tacticInfo.stx with
+  | .node _ kind _ =>
+    -- Check if this is a real user tactic vs internal elaboration
+    -- `do` blocks use synthetic tactics from Lean.Parser.Term.do* kinds
+    let kindStr := kind.toString
+    -- Real proof tactics: intro, exact, apply, simp, rw, have, etc.
+    -- Internal `do` tactics: doSeqItem, doLet, doLetArrow, etc.
+    !kindStr.startsWith "Lean.Parser.Term.do" &&
+    !kindStr.startsWith "Lean.Parser.Term.let" &&
+    kindStr != "Lean.Parser.Term.byTactic"
+  | _ => false
+
+/-- Check if InfoTree contains term-mode code (not a `by` proof block). -/
 def isTermModeTree (infoTree : InfoTree) : Bool :=
-  -- If we find TermInfo nodes but no TacticInfo nodes at the same level,
-  -- this is term-mode code
-  let hasTacticInfo := infoTree.foldInfo (init := false) fun _ info acc =>
-    acc || info matches .ofTacticInfo _
+  -- A tree is term-mode if it has TermInfo but no real user tactics
+  -- (`do` notation generates TacticInfo internally, but those aren't user proof tactics)
+  let hasUserTactic := infoTree.foldInfo (init := false) fun _ info acc =>
+    match info with
+    | .ofTacticInfo tacticInfo => acc || isUserTactic tacticInfo
+    | _ => acc
   let hasTermInfo := infoTree.foldInfo (init := false) fun _ info acc =>
     acc || info matches .ofTermInfo _
-  hasTermInfo && !hasTacticInfo
+  hasTermInfo && !hasUserTactic
 
 /-- Parse term-mode InfoTree and build functional DAG. -/
 def computeFunctionalDag (snap : Snapshots.Snapshot) (position : Lsp.Position) : RequestM (Option CompleteFunctionalDag) := do

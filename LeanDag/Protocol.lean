@@ -15,7 +15,7 @@ namespace LeanDag
 /-! ## Generated Types from JSON Schema -/
 
 -- Generate all types from the JSON schema
-gen_types_from_schema "protocol-schema.json"
+gen_types_from_schema "../protocol-schema.json"
 
 /-! ## DiffTag Conversion Functions -/
 

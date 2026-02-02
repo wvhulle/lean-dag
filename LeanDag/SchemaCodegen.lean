@@ -535,8 +535,9 @@ def elabGenTypesFromSchema : CommandElab := fun stx => do
   match stx with
   | `(command| gen_types_from_schema $path:str) =>
     let schemaPath := path.getString
-    -- Resolve relative path from the file containing this command
-    let srcDir := (← IO.currentDir)
+    -- Resolve relative path from the source file's directory (not cwd)
+    let srcFile := (← getFileName)
+    let srcDir := System.FilePath.mk srcFile |>.parent.getD "."
     let fullPath := if schemaPath.startsWith "/" then
       System.FilePath.mk schemaPath
     else

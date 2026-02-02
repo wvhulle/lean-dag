@@ -1,7 +1,7 @@
 import Lean
 import Lean.Data.Json
 
-open Lean Elab Command Meta
+open Lean Elab Command Meta Parser Term
 
 namespace LeanDag.SchemaCodegen
 
@@ -53,17 +53,10 @@ structure SchemaDefinition where
 def getDescription (j : Json) : Option String :=
   j.getObjValAs? String "description" |>.toOption
 
-def snakeToCamel (s : String) : String :=
+def toCamelCase (s : String) : String :=
   match s.splitOn "_" with
   | [] => ""
-  | [x] => x
-  | first :: rest => first ++ String.join (rest.map String.capitalize)
-
-def lowercaseFirst (s : String) : String :=
-  if s.isEmpty then s else s.take 1 |>.toString |>.toLower ++ (s.drop 1).toString
-
-def toCamelCase (s : String) : String :=
-  if s.contains '_' then snakeToCamel s else lowercaseFirst s
+  | first :: rest => first.decapitalize ++ String.join (rest.map String.capitalize)
 
 def resolveRef (ref : String) : String :=
   ref.splitOn "/" |>.getLast!
@@ -103,21 +96,16 @@ def parseProperty (name : String) (propSchema : Json) (isRequired : Bool) : Sche
     hasDefault := propSchema.getObjVal? "default" |>.isOk
     defaultValue := propSchema.getObjVal? "default" |>.toOption }
 
-/-- Get property order as sorted keys. -/
-def getPropertyOrder (schema : Json) : List String :=
+/-- Parse properties from a JSON schema, optionally excluding certain fields. -/
+def parsePropertiesFrom (schema : Json) (exclude : List String := []) : List SchemaProperty :=
   match schema.getObjVal? "properties" with
-  | .ok (.obj kvs) => kvs.toList.map (·.1) |>.mergeSort (· < ·)
-  | _ => []
-
-def parseProperties (schema : Json) : List SchemaProperty :=
-  let propsObj := schema.getObjVal? "properties" |>.toOption.getD (Json.mkObj [])
-  let required := schema.getObjValAs? (Array String) "required" |>.toOption.getD #[] |>.toList
-  let order := getPropertyOrder schema
-  match propsObj with
-  | .obj kvs =>
+  | .ok (.obj kvs) =>
     let kvsList := kvs.toList
+    let order := kvsList.map (·.1) |>.mergeSort (· < ·)
+    let required := schema.getObjValAs? (Array String) "required" |>.toOption.getD #[] |>.toList
     order.filterMap fun name =>
-      kvsList.find? (·.1 == name) |>.map fun (_, propSchema) =>
+      if exclude.contains name then none
+      else kvsList.find? (·.1 == name) |>.map fun (_, propSchema) =>
         parseProperty name propSchema (required.contains name)
   | _ => []
 
@@ -135,12 +123,7 @@ def parseVariant (variantSchema : Json) (discriminatorField : String) : Option T
   let (_, discProp) ← kvs.find? (·.1 == discriminatorField)
   let constVal ← discProp.getObjVal? "const" |>.toOption
   let discriminatorValue ← constVal.getStr? |>.toOption
-  let required := variantSchema.getObjValAs? (Array String) "required" |>.toOption.getD #[] |>.toList
-  let order := getPropertyOrder variantSchema
-  let properties := order.filterMap fun name =>
-    if name == discriminatorField then none
-    else kvs.find? (·.1 == name) |>.map fun (_, propSchema) =>
-      parseProperty name propSchema (required.contains name)
+  let properties := parsePropertiesFrom variantSchema [discriminatorField]
   some { discriminatorValue, properties, description := getDescription variantSchema }
 
 def determineSchemaKind (schema : Json) : SchemaKind :=
@@ -161,7 +144,7 @@ def parseDefinition (name : String) (schema : Json) : SchemaDefinition :=
     let variants := oneOfArr.toList.filterMap (parseVariant · discField)
     { name, kind, description, properties := [], enumValues := [], variants, discriminatorField := discField }
   | .object =>
-    { name, kind, description, properties := parseProperties schema, enumValues := [], variants := [], discriminatorField := "" }
+    { name, kind, description, properties := parsePropertiesFrom schema, enumValues := [], variants := [], discriminatorField := "" }
 
 def parseSchema (json : Json) : Except String (List SchemaDefinition) := do
   let defs ← json.getObjVal? "$defs"
@@ -197,163 +180,338 @@ partial def topologicalSort (defs : List SchemaDefinition) : List SchemaDefiniti
       remaining := remaining.drop 1
   return sorted ++ remaining
 
-/-! ## Code Generation -/
+/-! ## Syntax Construction Helpers -/
 
-def genStructField (prop : SchemaProperty) : String :=
-  let fieldName := toCamelCase prop.name
-  let fieldType := propertyToLeanType prop
-  let defaultPart :=
-    if prop.hasDefault then
-      match prop.defaultValue with
-      | some (.bool b) => s!" := {b}"
-      | some (.num n) => s!" := {n.mantissa}"
-      | some (.str s) => s!" := \"{s}\""
-      | some (.arr a) => if a.isEmpty then " := #[]" else ""
-      | _ => ""
-    else if !prop.isRequired then " := none"
-    else ""
-  s!"  {fieldName} : {fieldType}{defaultPart}"
+/-- Convert JSON property name to Lean field identifier -/
+def mkFieldIdent (jsonName : String) : Ident :=
+  mkIdent (Name.mkSimple (toCamelCase jsonName))
 
-def genStructureString (def_ : SchemaDefinition) : String :=
-  let docComment := def_.description.map (s!"/-- {·} -/\n") |>.getD ""
-  let fields := def_.properties.map genStructField |> String.intercalate "\n"
-  -- Generate custom ToJson that maps camelCase fields to snake_case JSON keys
-  let toJsonFields := def_.properties.map fun p =>
-    let fieldName := toCamelCase p.name
-    s!"(\"{p.name}\", Lean.toJson s.{fieldName})"
-  let toJsonBody := s!"Json.mkObj [{String.intercalate ", " toJsonFields}]"
-  -- Generate custom FromJson that maps snake_case JSON keys to camelCase fields
-  let fromJsonBindings := def_.properties.map fun p =>
-    let fieldName := toCamelCase p.name
-    let fieldType := propertyToLeanType p
-    s!"    let {fieldName} : {fieldType} ← j.getObjValAs? _ \"{p.name}\""
-  let fieldNames := def_.properties.map (toCamelCase ·.name)
-  let fromJsonReturn := ".ok { " ++ String.intercalate ", " fieldNames ++ " }"
-  s!"{docComment}structure {def_.name} where
-{fields}
-  deriving Inhabited, BEq, Repr
+/-- Create a type identifier from a type name -/
+def mkTypeIdent (typeName : String) : Ident :=
+  mkIdent (Name.mkSimple typeName)
 
-instance : ToJson {def_.name} where
-  toJson s := {toJsonBody}
+/-- Build type expression from schema as TSyntax `term -/
+partial def schemaTypeToTermStx (schema : Json) : CommandElabM (TSyntax `term) := do
+  if let some ref := schema.getObjValAs? String "$ref" |>.toOption then
+    let typeName := resolveRef ref
+    return ← `($(mkTypeIdent typeName))
+  else if schema.getObjVal? "const" |>.isOk then
+    return ← `(String)
+  else
+    match schema.getObjValAs? String "type" |>.toOption.getD "any" with
+    | "string" => `(String)
+    | "integer" =>
+      let min := schema.getObjValAs? Int "minimum" |>.toOption
+      if min == some 0 then `(Nat) else `(Int)
+    | "boolean" => `(Bool)
+    | "array" =>
+      let items := schema.getObjVal? "items" |>.toOption.getD (Json.mkObj [])
+      let itemType ← schemaTypeToTermStx items
+      `(Array $itemType)
+    | "object" => `(Json)
+    | _ => `(Json)
 
-instance : FromJson {def_.name} where
-  fromJson? j := do
-{String.intercalate "\n" fromJsonBindings}
-    {fromJsonReturn}"
+/-- Build full property type with Option wrapper if needed -/
+def propertyToTypeStx (prop : SchemaProperty) : CommandElabM (TSyntax `term) := do
+  let baseType ← schemaTypeToTermStx prop.schemaType
+  if prop.isRequired || prop.hasDefault then
+    return baseType
+  else
+    `(Option $baseType)
 
-def genEnumString (def_ : SchemaDefinition) : String :=
-  let typeName := def_.name
-  let docComment := def_.description.map (s!"/-- {·} -/\n") |>.getD ""
-  let variants := def_.enumValues.map (s!"  | {toCamelCase ·}") |> String.intercalate "\n"
-  let toJsonCases := def_.enumValues.map fun v => s!"    | .{toCamelCase v} => \"{v}\""
-  let fromJsonCases := def_.enumValues.map fun v => s!"    | \"{v}\" => .ok {typeName}.{toCamelCase v}"
-  s!"{docComment}inductive {typeName} where
-{variants}
-  deriving Inhabited, BEq, Repr
+/-- Build default value syntax for a property -/
+def mkDefaultValueStx (prop : SchemaProperty) : CommandElabM (Option (TSyntax `term)) := do
+  if prop.hasDefault then
+    match prop.defaultValue with
+    | some (.bool b) => return some (← `($(quote b)))
+    | some (.num n) =>
+      let intVal := n.mantissa
+      if intVal ≥ 0 then
+        return some (← `($(quote intVal.toNat)))
+      else
+        -- For negative integers, construct the literal directly
+        let lit := Syntax.mkNumLit (toString intVal)
+        return some (← `(($lit : Int)))
+    | some (.str s) => return some (← `($(quote s)))
+    | some (.arr a) =>
+      if a.isEmpty then return some (← `(#[]))
+      else return none
+    | _ => return none
+  else if !prop.isRequired then
+    return some (← `(none))
+  else
+    return none
 
-instance : ToJson {typeName} where
-  toJson
-{String.intercalate "\n" toJsonCases}
+/-- Build structure field declaration -/
+def mkStructFieldStx (prop : SchemaProperty) : CommandElabM (TSyntax `Lean.Parser.Command.structExplicitBinder) := do
+  let fieldName := mkFieldIdent prop.name
+  let fieldType ← propertyToTypeStx prop
+  match ← mkDefaultValueStx prop with
+  | some defaultVal =>
+    `(Lean.Parser.Command.structExplicitBinder| ($fieldName : $fieldType := $defaultVal))
+  | none =>
+    `(Lean.Parser.Command.structExplicitBinder| ($fieldName : $fieldType))
 
-instance : FromJson {typeName} where
-  fromJson? j := do
-    let str ← j.getStr?
-    match str with
-{String.intercalate "\n" fromJsonCases}
-    | x => .error (\"invalid {typeName}: \" ++ x)"
+/-- Build a ToJson pair for a field -/
+def mkToJsonFieldPair (prop : SchemaProperty) : CommandElabM (TSyntax `term) := do
+  let jsonKey := prop.name
+  let fieldName := mkFieldIdent prop.name
+  `(($(quote jsonKey), Lean.toJson s.$fieldName))
 
-def typeReferencesName (typeStr name : String) : Bool :=
-  typeStr.splitOn " " |>.any (· == name)
+/-- Build FromJson field extraction as a do-sequence item -/
+def mkFromJsonFieldBinding (prop : SchemaProperty) : CommandElabM (TSyntax ``Parser.Term.doSeqItem) := do
+  let fieldName := mkFieldIdent prop.name
+  let jsonKey := prop.name
+  let fieldType ← propertyToTypeStx prop
+  `(Parser.Term.doSeqItem| let $fieldName : $fieldType ← j.getObjValAs? _ $(quote jsonKey))
 
-def genTaggedUnionString (def_ : SchemaDefinition) : String :=
-  let typeName := def_.name
+/-! ## Structure Generation -/
+
+def genStructure (def_ : SchemaDefinition) : CommandElabM Unit := do
+  let typeName := mkTypeIdent def_.name
+
+  -- Build structure fields
+  let fields ← def_.properties.toArray.mapM mkStructFieldStx
+
+  -- Generate the structure definition
+  let structCmd ← `(command|
+    structure $typeName where
+      $[$fields]*
+      deriving Inhabited, BEq, Repr
+  )
+  elabCommand structCmd
+
+  -- Generate ToJson instance
+  let toJsonPairs ← def_.properties.toArray.mapM mkToJsonFieldPair
+  let toJsonInst ← `(command|
+    instance : ToJson $typeName where
+      toJson s := Json.mkObj [$[$toJsonPairs],*]
+  )
+  elabCommand toJsonInst
+
+  -- Generate FromJson instance
+  let fromJsonBindings ← def_.properties.toArray.mapM mkFromJsonFieldBinding
+  let fieldNames := def_.properties.toArray.map (mkFieldIdent ·.name)
+  let fieldAssignments ← fieldNames.mapM fun fn => `(Parser.Term.structInstLVal| $fn:ident)
+  let fromJsonInst ← `(command|
+    instance : FromJson $typeName where
+      fromJson? j := do
+        $[$fromJsonBindings]*
+        .ok { $[$fieldAssignments := $fieldNames],* }
+  )
+  elabCommand fromJsonInst
+
+/-! ## Enum Generation -/
+
+def genEnum (def_ : SchemaDefinition) : CommandElabM Unit := do
+  let typeName := mkTypeIdent def_.name
+
+  -- Build constructors
+  let ctorStxs ← def_.enumValues.toArray.mapM fun v => do
+    let ctorName := mkIdent (Name.mkSimple (toCamelCase v))
+    `(Lean.Parser.Command.ctor| | $ctorName:ident)
+
+  -- Generate the inductive definition
+  let inductiveCmd ← `(command|
+    inductive $typeName:ident where
+      $[$ctorStxs]*
+      deriving Inhabited, BEq, Repr
+  )
+  elabCommand inductiveCmd
+
+  -- Generate ToJson match arms
+  let toJsonMatchArms ← def_.enumValues.toArray.mapM fun v => do
+    let ctorIdent := mkIdent (Name.mkSimple (toCamelCase v))
+    `(Term.matchAltExpr| | .$ctorIdent:ident => $(quote v))
+
+  -- Build the match expression as a term
+  let toJsonMatch ← `(match x with $toJsonMatchArms:matchAlt*)
+  let toJsonInst ← `(command|
+    instance : ToJson $typeName where
+      toJson x := $toJsonMatch
+  )
+  elabCommand toJsonInst
+
+  -- Generate FromJson instance
+  let fromJsonMatchArms ← def_.enumValues.toArray.mapM fun v => do
+    -- Build qualified constructor name as TypeName.CtorName
+    let qualCtorName := mkIdent (Name.mkStr (Name.mkSimple def_.name) (toCamelCase v))
+    let result ← `(.ok $qualCtorName)
+    `(Term.matchAltExpr| | $(quote v) => $result)
+
+  let typeNameStr := def_.name
+  let errorArm ← `(Term.matchAltExpr| | x => .error (s!"invalid {$(quote typeNameStr)}: " ++ x))
+  let allFromJsonArms := fromJsonMatchArms.push errorArm
+
+  -- Build the complete body with bind for string extraction
+  let fromJsonBody ← `(j.getStr? >>= fun str => match str with $allFromJsonArms:matchAlt*)
+  let fromJsonInst ← `(command|
+    instance : FromJson $typeName where
+      fromJson? j := $fromJsonBody
+  )
+  elabCommand fromJsonInst
+
+/-! ## Tagged Union Generation -/
+
+/-- Check if a property type references the given type name (for self-recursion detection) -/
+def isRecursiveRef (pType : String) (typeName : String) : Bool :=
+  pType.splitOn " " |>.any (· == typeName)
+
+/-- Detect if a tagged union is self-recursive -/
+def detectSelfRecursion (def_ : SchemaDefinition) : Bool :=
+  def_.variants.any fun v =>
+    v.properties.any fun p => isRecursiveRef (propertyToLeanType p) def_.name
+
+def genTaggedUnion (def_ : SchemaDefinition) : CommandElabM Unit := do
+  let typeName := mkTypeIdent def_.name
+  let typeNameStr := def_.name
   let discField := def_.discriminatorField
-  let docComment := def_.description.map (s!"/-- {·} -/\n") |>.getD ""
-  let isSelfRecursive := def_.variants.any fun v =>
-    v.properties.any fun p => typeReferencesName (propertyToLeanType p) typeName
+  let isSelfRecursive := detectSelfRecursion def_
 
-  -- Generate inductive variants (use camelCase for Lean field names)
-  let variants := def_.variants.map fun v =>
-    let variantName := toCamelCase v.discriminatorValue
-    let params := v.properties.map fun p =>
-      let fieldName := toCamelCase p.name
-      s!"({fieldName} : {propertyToLeanType p})"
-    if params.isEmpty then s!"  | {variantName}" else s!"  | {variantName} {String.intercalate " " params}"
+  -- Build variant constructors
+  let ctorStxs ← def_.variants.toArray.mapM fun v => do
+    let ctorName := mkIdent (Name.mkSimple (toCamelCase v.discriminatorValue))
+    if v.properties.isEmpty then
+      `(Lean.Parser.Command.ctor| | $ctorName:ident)
+    else
+      let paramBinders ← v.properties.toArray.mapM fun p => do
+        let paramName := mkFieldIdent p.name
+        let paramType ← propertyToTypeStx p
+        `(bracketedBinder| ($paramName : $paramType))
+      `(Lean.Parser.Command.ctor| | $ctorName:ident $[$paramBinders]*)
 
-  -- Generate toJson (map camelCase params to snake_case JSON keys)
-  let toJsonCases := def_.variants.map fun v =>
-    let variantName := toCamelCase v.discriminatorValue
-    let paramNames := v.properties.map fun p => s!"p_{toCamelCase p.name}"
-    let fieldsList := v.properties.map fun p =>
-      let paramVar := s!"p_{toCamelCase p.name}"
-      if isSelfRecursive && typeReferencesName (propertyToLeanType p) typeName then
+  -- Generate the inductive definition
+  let inductiveCmd ← `(command|
+    inductive $typeName:ident where
+      $[$ctorStxs]*
+      deriving Inhabited, BEq, Repr
+  )
+  elabCommand inductiveCmd
+
+  -- Generate partial toJson function
+  let toJsonArms ← def_.variants.toArray.mapM fun v => do
+    -- Build qualified constructor pattern as TypeName.CtorName
+    let qualCtorName := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) (toCamelCase v.discriminatorValue))
+    let discPair ← `(($(quote discField), $(quote v.discriminatorValue)))
+
+    if v.properties.isEmpty then
+      let result ← `(Json.mkObj [$discPair])
+      `(Term.matchAltExpr| | $qualCtorName => $result)
+    else
+      let paramNames := v.properties.toArray.map fun p =>
+        mkIdent (Name.mkSimple ("p_" ++ toCamelCase p.name))
+
+      let fieldPairs ← (v.properties.toArray.zip paramNames).mapM fun (p, paramVar) => do
+        let pType := propertyToLeanType p
         let baseType := schemaTypeToLean p.schemaType
-        if baseType.startsWith "Array " then s!"(\"{p.name}\", Json.arr ({paramVar}.map {typeName}.toJson))"
-        else s!"(\"{p.name}\", {typeName}.toJson {paramVar})"
-      else s!"(\"{p.name}\", Lean.toJson {paramVar})"
-    let discPair := s!"(\"{discField}\", \"{v.discriminatorValue}\")"
-    if paramNames.isEmpty then s!"  | {typeName}.{variantName} => Json.mkObj [{discPair}]"
-    else s!"  | {typeName}.{variantName} {String.intercalate " " paramNames} => Json.mkObj [{discPair}, {String.intercalate ", " fieldsList}]"
+        let toJsonFnIdent := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) "toJson")
+        if isSelfRecursive && isRecursiveRef pType typeNameStr then
+          if baseType.startsWith "Array " then
+            `(($(quote p.name), Json.arr (($paramVar).map $toJsonFnIdent)))
+          else
+            `(($(quote p.name), $toJsonFnIdent $paramVar))
+        else
+          `(($(quote p.name), Lean.toJson $paramVar))
 
-  -- Generate fromJson (map snake_case JSON keys to camelCase params)
-  let fromJsonCases := def_.variants.map fun v =>
-    let variantName := toCamelCase v.discriminatorValue
-    let bindings := v.properties.map fun p =>
-      let fieldName := toCamelCase p.name
-      let pType := propertyToLeanType p
-      let baseType := schemaTypeToLean p.schemaType
-      if isSelfRecursive && typeReferencesName pType typeName then
-        if baseType.startsWith "Array " then
-          s!"    let {fieldName}Json ← j.getObjValAs? (Array Json) \"{p.name}\"\n    let {fieldName}List ← {fieldName}Json.toList.mapM {typeName}.fromJson?\n    let {fieldName} : {pType} := {fieldName}List.toArray"
-        else if pType.startsWith "Option " then
-          s!"    let {fieldName}Json := j.getObjVal? \"{p.name}\" |>.toOption\n    let {fieldName} : {pType} ← match {fieldName}Json with | some jv => {typeName}.fromJson? jv |>.map some | none => .ok none"
-        else s!"    let {fieldName}Json ← j.getObjVal? \"{p.name}\"\n    let {fieldName} : {pType} ← {typeName}.fromJson? {fieldName}Json"
-      else s!"    let {fieldName} : {pType} ← j.getObjValAs? _ \"{p.name}\""
-    let paramNames := v.properties.map fun p => toCamelCase p.name
-    let returnExpr := if paramNames.isEmpty then s!"{typeName}.{variantName}"
-      else s!"{typeName}.{variantName} {String.intercalate " " paramNames}"
-    if bindings.isEmpty then s!"  | \"{v.discriminatorValue}\" => .ok ({returnExpr})"
-    else s!"  | \"{v.discriminatorValue}\" => do\n{String.intercalate "\n" bindings}\n    .ok ({returnExpr})"
+      -- Build the pattern with parameters - use direct splicing without brackets
+      let result ← `(Json.mkObj [$discPair, $[$fieldPairs],*])
+      `(Term.matchAltExpr| | $qualCtorName $paramNames* => $result)
 
-  s!"{docComment}inductive {typeName} where
-{String.intercalate "\n" variants}
-  deriving Inhabited, BEq, Repr
+  let toJsonFnName := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) "toJson")
+  -- Build match expression as body
+  let toJsonMatch ← `(match x with $toJsonArms:matchAlt*)
+  let toJsonDef ← `(command|
+    partial def $toJsonFnName (x : $typeName) : Json := $toJsonMatch
+  )
+  elabCommand toJsonDef
 
-partial def {typeName}.toJson : {typeName} → Json
-{String.intercalate "\n" toJsonCases}
+  let toJsonInst ← `(command|
+    instance : ToJson $typeName := ⟨$toJsonFnName⟩
+  )
+  elabCommand toJsonInst
 
-instance : ToJson {typeName} := ⟨{typeName}.toJson⟩
+  -- Generate partial fromJson? function
+  let fromJsonArms ← def_.variants.toArray.mapM fun v => do
+    let qualCtorName := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) (toCamelCase v.discriminatorValue))
 
-partial def {typeName}.fromJson? (j : Json) : Except String {typeName} := do
-  let discVal ← j.getObjValAs? String \"{discField}\"
-  match discVal with
-{String.intercalate "\n" fromJsonCases}
-  | x => .error (\"invalid {typeName} {discField}: \" ++ x)
+    if v.properties.isEmpty then
+      let result ← `(.ok $qualCtorName)
+      `(Term.matchAltExpr| | $(quote v.discriminatorValue) => $result)
+    else
+      let bindings ← v.properties.toArray.mapM fun p => do
+        let fieldName := mkFieldIdent p.name
+        let pType := propertyToLeanType p
+        let baseType := schemaTypeToLean p.schemaType
+        let fieldType ← propertyToTypeStx p
+        let fromJsonFnIdent := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) "fromJson?")
 
-instance : FromJson {typeName} := ⟨{typeName}.fromJson?⟩"
+        if isSelfRecursive && isRecursiveRef pType typeNameStr then
+          if baseType.startsWith "Array " then
+            let jsonVarName := mkIdent (Name.mkSimple (toCamelCase p.name ++ "Json"))
+            let listVarName := mkIdent (Name.mkSimple (toCamelCase p.name ++ "List"))
+            return #[
+              ← `(Parser.Term.doSeqItem| let $jsonVarName ← j.getObjValAs? (Array Json) $(quote p.name)),
+              ← `(Parser.Term.doSeqItem| let $listVarName ← ($jsonVarName).toList.mapM $fromJsonFnIdent),
+              ← `(Parser.Term.doSeqItem| let $fieldName : $fieldType := ($listVarName).toArray)
+            ]
+          else if pType.startsWith "Option " then
+            let jsonVarName := mkIdent (Name.mkSimple (toCamelCase p.name ++ "Json"))
+            -- For optional recursive fields, build match arms separately
+            let someArm ← `(Term.matchAltExpr| | some jv => ($fromJsonFnIdent jv).map some)
+            let noneArm ← `(Term.matchAltExpr| | none => .ok none)
+            let arms := #[someArm, noneArm]
+            let matchExpr ← `(match $jsonVarName:ident with $arms:matchAlt*)
+            return #[
+              ← `(Parser.Term.doSeqItem| let $jsonVarName := j.getObjVal? $(quote p.name) |>.toOption),
+              ← `(Parser.Term.doSeqItem| let $fieldName : $fieldType ← ($matchExpr))
+            ]
+          else
+            let jsonVarName := mkIdent (Name.mkSimple (toCamelCase p.name ++ "Json"))
+            return #[
+              ← `(Parser.Term.doSeqItem| let $jsonVarName ← j.getObjVal? $(quote p.name)),
+              ← `(Parser.Term.doSeqItem| let $fieldName : $fieldType ← ($fromJsonFnIdent $jsonVarName))
+            ]
+        else
+          return #[← `(Parser.Term.doSeqItem| let $fieldName : $fieldType ← j.getObjValAs? _ $(quote p.name))]
 
-def genDefinitionCode (def_ : SchemaDefinition) : String :=
+      let allBindings := bindings.flatMap id
+      let paramNames := v.properties.toArray.map (mkFieldIdent ·.name)
+      let returnExpr ← `($qualCtorName $paramNames*)
+
+      let body ← `(do
+          $[$allBindings]*
+          .ok $returnExpr)
+      `(Term.matchAltExpr| | $(quote v.discriminatorValue) => $body)
+
+  let errorArm ← `(Term.matchAltExpr| | x => .error (s!"invalid {$(quote typeNameStr)} {$(quote discField)}: " ++ x))
+  let allFromJsonArms := fromJsonArms.push errorArm
+
+  let fromJsonFnName := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) "fromJson?")
+  -- Build match expression for discriminator
+  let fromJsonMatch ← `(match discVal with $allFromJsonArms:matchAlt*)
+  -- Build the body expression without explicit type annotation
+  let fromJsonBody ← `(j.getObjValAs? String $(quote discField) >>= fun discVal => $fromJsonMatch)
+  -- Build return type for function signature
+  let returnType ← `(Except String $typeName)
+  -- Build partial def with explicit return type in signature
+  let fromJsonDef ← liftTermElabM <| `(partial def $fromJsonFnName:ident (j : Json) : $returnType := $fromJsonBody)
+  elabCommand fromJsonDef
+
+  -- Build the instance type separately
+  let fromJsonType ← `(FromJson $typeName)
+  -- Build instance using liftTermElabM
+  let fromJsonInst ← liftTermElabM <| `(instance : $fromJsonType := ⟨$fromJsonFnName⟩)
+  elabCommand fromJsonInst
+
+/-! ## Code Generation Dispatch -/
+
+def genDefinition (def_ : SchemaDefinition) : CommandElabM Unit := do
   match def_.kind with
-  | .object => genStructureString def_
-  | .stringEnum => genEnumString def_
-  | .taggedUnion => genTaggedUnionString def_
-
-def generateLeanCode (defs : List SchemaDefinition) : List String :=
-  (topologicalSort defs).map genDefinitionCode
+  | .object => genStructure def_
+  | .stringEnum => genEnum def_
+  | .taggedUnion => genTaggedUnion def_
 
 /-! ## Command Elaborator -/
-
-def parseAndElabCommand (code : String) : CommandElabM Unit := do
-  let env ← getEnv
-  match Parser.runParserCategory env `command code with
-  | .error e => throwError "Failed to parse generated code: {e}\n\nCode:\n{code}"
-  | .ok stx => elabCommand stx
-
-def parseAndElabMultipleCommands (codes : List String) : CommandElabM Unit := do
-  for code in codes do
-    for part in code.splitOn "\n\n" do
-      if !part.trimAsciiStart.toString.isEmpty then
-        parseAndElabCommand part
 
 syntax (name := genTypesFromSchema) "gen_types_from_schema" str : command
 
@@ -372,9 +530,9 @@ def elabGenTypesFromSchema : CommandElab := fun stx => do
     let defs ← match parseSchema json with
       | .ok d => pure d
       | .error e => throwError "Schema parse error: {e}"
-    let codes := generateLeanCode defs
     logInfo m!"Generated {defs.length} type definitions from schema"
-    parseAndElabMultipleCommands codes
+    for def_ in topologicalSort defs do
+      genDefinition def_
   | _ => throwUnsupportedSyntax
 
 end LeanDag.SchemaCodegen

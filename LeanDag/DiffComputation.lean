@@ -37,7 +37,7 @@ private def diffHypotheses (source target : Array ProofContextHypothesis) (dir :
         else h
       | none => h
     else if dir.markRemoved then
-      { h with is_removed := true, type := h.type.withDiff dir.missingTag }
+      { h with isRemoved := true, type := h.type.withDiff dir.missingTag }
     else
       { h with type := h.type.withDiff dir.missingTag }
 
@@ -54,7 +54,7 @@ private def diffGoals (source target : Array ProofObligation) (dir : DiffDirecti
         else g
       | none => g
     else if dir.markRemoved then
-      { g with is_removed := true, type := g.type.withDiff dir.missingTag }
+      { g with isRemoved := true, type := g.type.withDiff dir.missingTag }
     else
       { g with type := g.type.withDiff dir.missingTag }
 

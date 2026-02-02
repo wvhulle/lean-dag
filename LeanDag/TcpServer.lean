@@ -48,13 +48,20 @@ structure TcpServer where
   serverMode : ServerOperatingMode
   /-- Port the server is listening on. -/
   port : UInt16
+  /-- File URI this worker is handling. -/
+  fileUri : Option String
+  /-- Minimum port in the configured range (for client discovery). -/
+  portRangeMin : UInt16
+  /-- Maximum port in the configured range (for client discovery). -/
+  portRangeMax : UInt16
   /-- Cached state sent to newly connected clients. -/
   cachedState : IO.Ref CachedState
 
 namespace TcpServer
 
 /-- Create a new TCP server bound to the specified port. -/
-def create (port : UInt16) (serverMode : ServerOperatingMode := .standalone) : IO TcpServer := do
+def create (port : UInt16) (serverMode : ServerOperatingMode := .standalone)
+    (fileUri : Option String := none) (portRangeMin : UInt16 := 9742) (portRangeMax : UInt16 := 9842) : IO TcpServer := do
   let server ← TCP.Socket.Server.mk
   let addr := SocketAddressV4.mk (IPv4Addr.ofParts 127 0 0 1) port
   server.bind addr
@@ -62,8 +69,8 @@ def create (port : UInt16) (serverMode : ServerOperatingMode := .standalone) : I
   let clients ← IO.mkRef #[]
   let nextId ← IO.mkRef 0
   let cachedState ← IO.mkRef {}
-  IO.eprintln s!"[TcpServer] Listening on 127.0.0.1:{port}"
-  return { server, clients, nextId, serverMode, port, cachedState }
+  IO.eprintln s!"[TcpServer] Listening on 127.0.0.1:{port} for {fileUri.getD "unknown file"}"
+  return { server, clients, nextId, serverMode, port, fileUri, portRangeMin, portRangeMax, cachedState }
 
 /-- Send a message to a single client. Returns false if send failed. -/
 def sendToClient (client : ClientConnection) (msg : ServerToClientMessage) : IO Bool := do
@@ -81,8 +88,10 @@ def broadcast (srv : TcpServer) (msg : ServerToClientMessage) : IO Unit := do
   -- Cache typed data for newly connecting clients
   srv.cachedState.modify fun state =>
     match msg with
-    | .cursor uri pos method => { state with cursor := some ⟨method, pos, uri⟩ }
-    | .proofDag dag pos uri => { state with proofDag := some (uri, pos, dag) }
+    | .cursor (uri := uri) (position := pos) (method := method) =>
+        { state with cursor := some ⟨uri, pos, method⟩ }
+    | .proofDag (uri := uri) (position := pos) (dag := dag) =>
+        { state with proofDag := some (uri, pos, dag) }
     | _ => state
   let clients ← srv.clients.get
   IO.eprintln s!"[TcpServer] Broadcasting to {clients.size} clients"
@@ -129,15 +138,21 @@ def handleClient (srv : TcpServer) (client : ClientConnection) : Async Unit := d
 
   -- Send Connected message and cached state immediately
   let _ ← IO.asTask do
-    let _ ← sendToClient client (.connected (some srv.serverMode))
+    let connectedMsg := ServerToClientMessage.connected
+      (fileUri := srv.fileUri)
+      (port := some srv.port.toNat)
+      (portRangeMax := some srv.portRangeMax.toNat)
+      (portRangeMin := some srv.portRangeMin.toNat)
+      (serverMode := some srv.serverMode)
+    let _ ← sendToClient client connectedMsg
     -- Send cached state to newly connected client
     let state ← srv.cachedState.get
     if let some info := state.cursor then
       IO.eprintln s!"[TcpServer] Sending cached cursor to client {client.id}"
-      let _ ← sendToClient client (.cursor info.uri info.position info.method)
+      let _ ← sendToClient client (.cursor (uri := info.uri) (position := info.position) (method := info.method))
     if let some (uri, pos, dag) := state.proofDag then
       IO.eprintln s!"[TcpServer] Sending cached proof DAG to client {client.id}"
-      let _ ← sendToClient client (.proofDag dag pos uri)
+      let _ ← sendToClient client (.proofDag (uri := uri) (position := pos) (dag := dag))
 
   -- Read loop for commands from client
   for _ in Lean.Loop.mk do
@@ -151,14 +166,14 @@ def handleClient (srv : TcpServer) (client : ClientConnection) : Async Unit := d
         match Lean.Json.parse line >>= ClientToServerCommand.fromJson? with
         | .ok cmd =>
           match cmd with
-          | .navigate pos uri =>
+          | .navigate (uri := uri) (position := pos) =>
             IO.eprintln s!"[TcpServer] Received navigate command from client {client.id}: {uri}:{pos.line}:{pos.character}"
             -- Call the navigate handler if set
             if let some handler ← navigateHandlerRef.get then
               handler uri pos
             else
               IO.eprintln "[TcpServer] Navigate handler not set"
-          | .getProofDag mode pos uri =>
+          | .getProofDag (uri := uri) (position := pos) (mode := mode) =>
             IO.eprintln s!"[TcpServer] Received getProofDag command from client {client.id}: {uri}:{pos.line}:{pos.character} mode={mode}"
             -- Note: In library mode, this command cannot be directly handled here
             -- because we don't have access to the document context.

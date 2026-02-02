@@ -9,539 +9,362 @@ namespace LeanDag.SchemaCodegen
 
 This module provides a custom command elaborator `gen_types_from_schema` that reads
 a JSON schema file and generates Lean 4 types with ToJson/FromJson instances.
+
+## Property Order
+
+JSON objects in Lean.Json are stored as sorted RBNodes, losing insertion order.
+To preserve property order for constructor parameters, we use the `"x-property-order"`
+extension field in the schema. If not present, properties are sorted alphabetically.
 -/
 
-/-! ## Schema Representation Types -/
+/-! ## Schema Representation -/
 
-/-- Represents a property within a JSON schema object definition. -/
 structure SchemaProperty where
   name : String
-  schemaType : Json  -- Full JSON schema for this property
+  schemaType : Json
   description : Option String
   isRequired : Bool
   hasDefault : Bool
   defaultValue : Option Json
   deriving Inhabited
 
-/-- The kind of schema definition. -/
 inductive SchemaKind where
-  | object       -- Regular object with properties
-  | stringEnum   -- String enum type
-  | taggedUnion  -- oneOf with discriminator (like AnnotatedTextTree)
-  deriving Inhabited, Repr, BEq
+  | object | stringEnum | taggedUnion
+  deriving Inhabited, BEq
 
-/-- Variant information for tagged unions. -/
 structure TaggedVariant where
-  discriminatorValue : String  -- e.g., "text", "append", "tag"
+  discriminatorValue : String
   properties : List SchemaProperty
   description : Option String
   deriving Inhabited
 
-/-- Represents a complete type definition from the schema. -/
 structure SchemaDefinition where
   name : String
   kind : SchemaKind
   description : Option String
-  properties : List SchemaProperty  -- For object types
-  enumValues : List String          -- For string enums
-  variants : List TaggedVariant     -- For tagged unions
-  discriminatorField : String       -- Field name for tagged union discriminator
+  properties : List SchemaProperty
+  enumValues : List String
+  variants : List TaggedVariant
+  discriminatorField : String
   deriving Inhabited
 
-/-! ## Schema Parsing -/
+/-! ## Utilities -/
 
-/-- Extract description from a JSON schema node. -/
 def getDescription (j : Json) : Option String :=
   j.getObjValAs? String "description" |>.toOption
 
-/-- Check if a field is required based on the "required" array. -/
-def isFieldRequired (requiredFields : List String) (fieldName : String) : Bool :=
-  requiredFields.contains fieldName
+def snakeToCamel (s : String) : String :=
+  match s.splitOn "_" with
+  | [] => ""
+  | [x] => x
+  | first :: rest => first ++ String.join (rest.map String.capitalize)
 
-/-- Parse a single property from the schema. -/
+def lowercaseFirst (s : String) : String :=
+  if s.isEmpty then s else s.take 1 |>.toString |>.toLower ++ (s.drop 1).toString
+
+def toCamelCase (s : String) : String :=
+  if s.contains '_' then snakeToCamel s else lowercaseFirst s
+
+def resolveRef (ref : String) : String :=
+  ref.splitOn "/" |>.getLast!
+
+/-! ## Type Mapping -/
+
+partial def schemaTypeToLean (schema : Json) : String :=
+  if let some ref := schema.getObjValAs? String "$ref" |>.toOption then
+    resolveRef ref
+  else if schema.getObjVal? "const" |>.isOk then
+    "String"
+  else
+    match schema.getObjValAs? String "type" |>.toOption.getD "any" with
+    | "string" => "String"
+    | "integer" =>
+      let min := schema.getObjValAs? Int "minimum" |>.toOption
+      if min == some 0 then "Nat" else "Int"
+    | "boolean" => "Bool"
+    | "array" =>
+      let items := schema.getObjVal? "items" |>.toOption.getD (Json.mkObj [])
+      s!"Array {schemaTypeToLean items}"
+    | "object" => "Json"
+    | _ => "Json"
+
+def propertyToLeanType (prop : SchemaProperty) : String :=
+  let baseType := schemaTypeToLean prop.schemaType
+  if prop.isRequired || prop.hasDefault then baseType
+  else if baseType.contains ' ' then s!"Option ({baseType})" else s!"Option {baseType}"
+
+/-! ## Schema Parsing -/
+
 def parseProperty (name : String) (propSchema : Json) (isRequired : Bool) : SchemaProperty :=
-  let hasDefault := propSchema.getObjVal? "default" |>.isOk
-  let defaultValue := propSchema.getObjVal? "default" |>.toOption
-  {
-    name
+  { name
     schemaType := propSchema
     description := getDescription propSchema
     isRequired
-    hasDefault
-    defaultValue
-  }
+    hasDefault := propSchema.getObjVal? "default" |>.isOk
+    defaultValue := propSchema.getObjVal? "default" |>.toOption }
 
-/-- Parse properties from an object schema. -/
-def parseProperties (schema : Json) : List SchemaProperty := Id.run do
+/-- Get property order as sorted keys. -/
+def getPropertyOrder (schema : Json) : List String :=
+  match schema.getObjVal? "properties" with
+  | .ok (.obj kvs) => kvs.toList.map (·.1) |>.mergeSort (· < ·)
+  | _ => []
+
+def parseProperties (schema : Json) : List SchemaProperty :=
   let propsObj := schema.getObjVal? "properties" |>.toOption.getD (Json.mkObj [])
-  let requiredArr := schema.getObjValAs? (Array String) "required" |>.toOption.getD #[]
-  let requiredList := requiredArr.toList
-  let mut result : List SchemaProperty := []
+  let required := schema.getObjValAs? (Array String) "required" |>.toOption.getD #[] |>.toList
+  let order := getPropertyOrder schema
   match propsObj with
   | .obj kvs =>
-    for ⟨name, propSchema⟩ in kvs.toList do
-      let isReq := isFieldRequired requiredList name
-      result := result ++ [parseProperty name propSchema isReq]
-  | _ => pure ()
-  result
+    let kvsList := kvs.toList
+    order.filterMap fun name =>
+      kvsList.find? (·.1 == name) |>.map fun (_, propSchema) =>
+        parseProperty name propSchema (required.contains name)
+  | _ => []
 
-/-- Parse enum values from a string enum schema. -/
-def parseEnumValues (schema : Json) : List String :=
-  match schema.getObjValAs? (Array String) "enum" with
-  | .ok arr => arr.toList
-  | .error _ => []
-
-/-- Determine the discriminator field from a tagged union schema. -/
 def findDiscriminatorField (variants : Array Json) : String := Id.run do
-  -- Look for a field with "const" that's present in all variants
   for variant in variants do
-    let propsObj := variant.getObjVal? "properties" |>.toOption.getD (Json.mkObj [])
-    match propsObj with
-    | .obj kvs =>
+    if let .ok (.obj kvs) := variant.getObjVal? "properties" then
       for ⟨name, propSchema⟩ in kvs.toList do
         if propSchema.getObjVal? "const" |>.isOk then
           return name
-    | _ => pure ()
-  -- Default to "type" if nothing found
-  "type"
+  return "type"
 
-/-- Parse a tagged union variant. -/
 def parseVariant (variantSchema : Json) (discriminatorField : String) : Option TaggedVariant := do
   let propsObj ← variantSchema.getObjVal? "properties" |>.toOption
-  let discriminatorProp ← match propsObj with
-    | .obj kvs => kvs.toList.find? (·.1 == discriminatorField)
-    | _ => none
-  let constVal ← discriminatorProp.2.getObjVal? "const" |>.toOption
+  let kvs ← match propsObj with | .obj kvs => some kvs.toList | _ => none
+  let (_, discProp) ← kvs.find? (·.1 == discriminatorField)
+  let constVal ← discProp.getObjVal? "const" |>.toOption
   let discriminatorValue ← constVal.getStr? |>.toOption
-  let requiredArr := variantSchema.getObjValAs? (Array String) "required" |>.toOption.getD #[]
-  let requiredList := requiredArr.toList
-  let mut properties : List SchemaProperty := []
-  match propsObj with
-  | .obj kvs =>
-    for ⟨name, propSchema⟩ in kvs.toList do
-      if name != discriminatorField then
-        let isReq := isFieldRequired requiredList name
-        properties := properties ++ [parseProperty name propSchema isReq]
-  | _ => pure ()
-  some {
-    discriminatorValue
-    properties
-    description := getDescription variantSchema
-  }
+  let required := variantSchema.getObjValAs? (Array String) "required" |>.toOption.getD #[] |>.toList
+  let order := getPropertyOrder variantSchema
+  let properties := order.filterMap fun name =>
+    if name == discriminatorField then none
+    else kvs.find? (·.1 == name) |>.map fun (_, propSchema) =>
+      parseProperty name propSchema (required.contains name)
+  some { discriminatorValue, properties, description := getDescription variantSchema }
 
-/-- Determine the kind of a schema definition. -/
 def determineSchemaKind (schema : Json) : SchemaKind :=
-  if schema.getObjVal? "oneOf" |>.isOk then
-    .taggedUnion
-  else if schema.getObjVal? "enum" |>.isOk then
-    .stringEnum
-  else
-    .object
+  if schema.getObjVal? "oneOf" |>.isOk then .taggedUnion
+  else if schema.getObjVal? "enum" |>.isOk then .stringEnum
+  else .object
 
-/-- Parse a single definition from $defs. -/
-def parseDefinition (name : String) (schema : Json) : SchemaDefinition := Id.run do
+def parseDefinition (name : String) (schema : Json) : SchemaDefinition :=
   let kind := determineSchemaKind schema
   let description := getDescription schema
   match kind with
   | .stringEnum =>
-    pure {
-      name
-      kind
-      description
-      properties := []
-      enumValues := parseEnumValues schema
-      variants := []
-      discriminatorField := ""
-    }
+    let enumValues := schema.getObjValAs? (Array String) "enum" |>.toOption.getD #[] |>.toList
+    { name, kind, description, properties := [], enumValues, variants := [], discriminatorField := "" }
   | .taggedUnion =>
     let oneOfArr := schema.getObjValAs? (Array Json) "oneOf" |>.toOption.getD #[]
     let discField := findDiscriminatorField oneOfArr
     let variants := oneOfArr.toList.filterMap (parseVariant · discField)
-    pure {
-      name
-      kind
-      description
-      properties := []
-      enumValues := []
-      variants
-      discriminatorField := discField
-    }
+    { name, kind, description, properties := [], enumValues := [], variants, discriminatorField := discField }
   | .object =>
-    pure {
-      name
-      kind
-      description
-      properties := parseProperties schema
-      enumValues := []
-      variants := []
-      discriminatorField := ""
-    }
+    { name, kind, description, properties := parseProperties schema, enumValues := [], variants := [], discriminatorField := "" }
 
-/-- Parse all definitions from a JSON schema. -/
 def parseSchema (json : Json) : Except String (List SchemaDefinition) := do
   let defs ← json.getObjVal? "$defs"
   match defs with
-  | .obj kvs => return kvs.toList.map fun ⟨name, schema⟩ => parseDefinition name schema
+  | .obj kvs => return kvs.toList.map fun (name, schema) => parseDefinition name schema
   | _ => throw "Expected $defs to be an object"
-
-/-! ## Type Mapping -/
-
-/-- Convert snake_case to camelCase. -/
-def snakeToCamel (s : String) : String := Id.run do
-  let parts := s.splitOn "_"
-  match parts with
-  | [] => ""
-  | [single] => single
-  | first :: rest =>
-    let capitalizedRest := rest.map fun part =>
-      if part.isEmpty then ""
-      else part.capitalize
-    first ++ String.join capitalizedRest
-
-/-- Lowercase the first character of a string (for constructor names). -/
-def lowercaseFirst (s : String) : String :=
-  if s.isEmpty then s
-  else (s.take 1).toString.toLower ++ (s.drop 1).toString
-
-/-- Convert any casing to camelCase (handles snake_case and PascalCase). -/
-def toCamelCase (s : String) : String :=
-  if s.contains '_' then snakeToCamel s
-  else lowercaseFirst s
-
-/-- Resolve a $ref to a type name. -/
-def resolveRef (ref : String) : String :=
-  -- "#/$defs/LineCharacterPosition" -> "LineCharacterPosition"
-  let parts := ref.splitOn "/"
-  parts.getLast!
-
-/-- Extract dependencies (referenced types) from a schema. -/
-partial def extractDependencies (schema : Json) : List String := Id.run do
-  let mut deps : List String := []
-  -- Check for $ref
-  if let some ref := schema.getObjValAs? String "$ref" |>.toOption then
-    deps := deps ++ [resolveRef ref]
-  -- Check properties
-  if let .ok (.obj props) := schema.getObjVal? "properties" then
-    for ⟨_, propSchema⟩ in props.toList do
-      deps := deps ++ extractDependencies propSchema
-  -- Check array items
-  if let .ok items := schema.getObjVal? "items" then
-    deps := deps ++ extractDependencies items
-  -- Check oneOf variants
-  if let .ok (.arr variants) := schema.getObjVal? "oneOf" then
-    for v in variants do
-      deps := deps ++ extractDependencies v
-  deps
-
-/-- Map a JSON schema type to a Lean type name. -/
-partial def schemaTypeToLean (schema : Json) : String := Id.run do
-  -- Check for $ref first
-  if let some ref := schema.getObjValAs? String "$ref" |>.toOption then
-    return resolveRef ref
-  -- Check for const (used in discriminator fields)
-  if schema.getObjVal? "const" |>.isOk then
-    return "String"
-  -- Check for type field
-  let typeStr := schema.getObjValAs? String "type" |>.toOption.getD "any"
-  match typeStr with
-  | "string" =>
-    if schema.getObjVal? "enum" |>.isOk then
-      "String"  -- Inline enums become String for now
-    else
-      "String"
-  | "integer" =>
-    let min := schema.getObjValAs? Int "minimum" |>.toOption
-    if min == some 0 then "Nat" else "Int"
-  | "boolean" => "Bool"
-  | "array" =>
-    let items := schema.getObjVal? "items" |>.toOption.getD (Json.mkObj [])
-    let itemType := schemaTypeToLean items
-    s!"Array {itemType}"
-  | "object" => "Json"  -- Fallback for inline objects
-  | _ => "Json"
-
-/-- Get the Lean type for a property, wrapping in Option only if truly optional. -/
-def propertyToLeanType (prop : SchemaProperty) : String :=
-  let baseType := schemaTypeToLean prop.schemaType
-  -- Use actual type if required OR has default; only Option for truly optional fields
-  if prop.isRequired || prop.hasDefault then
-    baseType
-  else
-    -- Add parentheses around complex types (those with spaces like "Array X")
-    let parts := baseType.splitOn " "
-    let needsParens := parts.length > 1
-    if needsParens then
-      s!"Option ({baseType})"
-    else
-      s!"Option {baseType}"
 
 /-! ## Dependency Ordering -/
 
-/-- Get all type names referenced by a definition. -/
-def getDefinitionDependencies (def_ : SchemaDefinition) : List String := Id.run do
-  let mut deps : List String := []
-  let reservedWords := ["List", "Option", "Array", "String", "Int", "Nat", "Bool", "Json"]
-  -- From properties
-  for prop in def_.properties do
-    let typeStr := schemaTypeToLean prop.schemaType
-    -- Extract type name from "Array X" or "Option X" or just "X"
-    let words := typeStr.splitOn " "
-    for word in words do
-      if !reservedWords.contains word then
-        deps := deps ++ [word]
-  -- From tagged union variants
-  for variant in def_.variants do
-    for prop in variant.properties do
-      let typeStr := schemaTypeToLean prop.schemaType
-      let words := typeStr.splitOn " "
-      for word in words do
-        if !reservedWords.contains word then
-          deps := deps ++ [word]
-  deps.eraseDups
+def getDefinitionDependencies (def_ : SchemaDefinition) : List String :=
+  let reserved := ["List", "Option", "Array", "String", "Int", "Nat", "Bool", "Json"]
+  let fromProps := def_.properties.map (schemaTypeToLean ·.schemaType)
+  let fromVariants := def_.variants.flatMap (·.properties.map (schemaTypeToLean ·.schemaType))
+  (fromProps ++ fromVariants).flatMap (·.splitOn " ") |>.filter (!reserved.contains ·) |>.eraseDups
 
-/-- Simple topological sort for definitions. -/
-def topologicalSort (defs : List SchemaDefinition) : List SchemaDefinition := Id.run do
+partial def topologicalSort (defs : List SchemaDefinition) : List SchemaDefinition := Id.run do
   let names := defs.map (·.name)
   let mut sorted : List SchemaDefinition := []
   let mut remaining := defs
-  let mut iterations := 0
-  let maxIterations := defs.length * defs.length + 1
-  while !remaining.isEmpty && iterations < maxIterations do
-    iterations := iterations + 1
-    let mut added := false
-    for def_ in remaining do
-      let deps := getDefinitionDependencies def_
-      -- Filter to only deps that are in our schema (not external types)
-      let schemaDeps := deps.filter (names.contains ·)
-      -- Check if all schema deps are already sorted
-      let sortedNames := sorted.map (·.name)
-      let allDepsSorted := schemaDeps.all fun dep => sortedNames.contains dep || dep == def_.name
-      if allDepsSorted then
-        sorted := sorted ++ [def_]
-        remaining := remaining.filter (·.name != def_.name)
-        added := true
-        break
-    if !added then
-      -- No progress, just add the first remaining (cycle or external dep)
-      match remaining.head? with
-      | some def_ =>
-        sorted := sorted ++ [def_]
-        remaining := remaining.drop 1
-      | none => break
-  sorted
+  let mut fuel := defs.length * defs.length + 1
+  while fuel > 0 && !remaining.isEmpty do
+    fuel := fuel - 1
+    let sortedNames := sorted.map (·.name)
+    match remaining.find? fun d =>
+      let deps := getDefinitionDependencies d |>.filter names.contains
+      deps.all fun dep => sortedNames.contains dep || dep == d.name
+    with
+    | some d =>
+      sorted := sorted ++ [d]
+      remaining := remaining.filter (·.name != d.name)
+    | none =>
+      sorted := sorted ++ remaining.take 1
+      remaining := remaining.drop 1
+  return sorted ++ remaining
 
 /-! ## Code Generation -/
 
-/-- Generate a structure field. -/
-def genStructField (prop : SchemaProperty) : String := Id.run do
-  let fieldName := prop.name  -- Keep snake_case to match JSON for deriving ToJson/FromJson
+def genStructField (prop : SchemaProperty) : String :=
+  let fieldName := toCamelCase prop.name
   let fieldType := propertyToLeanType prop
   let defaultPart :=
     if prop.hasDefault then
-      -- Field with default - use the default value
       match prop.defaultValue with
-      | some (.bool b) => s!" := {if b then "true" else "false"}"
-      | some (.num n) =>
-        if n.mantissa < 0 then s!" := {n.mantissa}"
-        else s!" := {n.mantissa}"
-      | some (.str strVal) => s!" := \"{strVal}\""
-      | some (.arr arr) => if arr.isEmpty then " := #[]" else ""
+      | some (.bool b) => s!" := {b}"
+      | some (.num n) => s!" := {n.mantissa}"
+      | some (.str s) => s!" := \"{s}\""
+      | some (.arr a) => if a.isEmpty then " := #[]" else ""
       | _ => ""
-    else if !prop.isRequired then
-      -- Optional field without default - default to none (type is Option T)
-      " := none"
-    else
-      -- Required field without default - no default
-      ""
+    else if !prop.isRequired then " := none"
+    else ""
   s!"  {fieldName} : {fieldType}{defaultPart}"
 
-/-- Generate a structure definition as a string. -/
-def genStructureString (def_ : SchemaDefinition) : String := Id.run do
-  let fields := def_.properties.map genStructField
-  let fieldsStr := String.intercalate "\n" fields
-  let docComment := match def_.description with
-    | some desc => s!"/-- {desc} -/\n"
-    | none => ""
-  s!"{docComment}structure {def_.name} where\n{fieldsStr}\n  deriving Inhabited, ToJson, FromJson, BEq, Repr"
+def genStructureString (def_ : SchemaDefinition) : String :=
+  let docComment := def_.description.map (s!"/-- {·} -/\n") |>.getD ""
+  let fields := def_.properties.map genStructField |> String.intercalate "\n"
+  -- Generate custom ToJson that maps camelCase fields to snake_case JSON keys
+  let toJsonFields := def_.properties.map fun p =>
+    let fieldName := toCamelCase p.name
+    s!"(\"{p.name}\", Lean.toJson s.{fieldName})"
+  let toJsonBody := s!"Json.mkObj [{String.intercalate ", " toJsonFields}]"
+  -- Generate custom FromJson that maps snake_case JSON keys to camelCase fields
+  let fromJsonBindings := def_.properties.map fun p =>
+    let fieldName := toCamelCase p.name
+    let fieldType := propertyToLeanType p
+    s!"    let {fieldName} : {fieldType} ← j.getObjValAs? _ \"{p.name}\""
+  let fieldNames := def_.properties.map (toCamelCase ·.name)
+  let fromJsonReturn := ".ok { " ++ String.intercalate ", " fieldNames ++ " }"
+  s!"{docComment}structure {def_.name} where
+{fields}
+  deriving Inhabited, BEq, Repr
 
-/-- Generate an enum definition as a string. -/
-def genEnumString (def_ : SchemaDefinition) : String := Id.run do
+instance : ToJson {def_.name} where
+  toJson s := {toJsonBody}
+
+instance : FromJson {def_.name} where
+  fromJson? j := do
+{String.intercalate "\n" fromJsonBindings}
+    {fromJsonReturn}"
+
+def genEnumString (def_ : SchemaDefinition) : String :=
   let typeName := def_.name
-  let docComment := match def_.description with
-    | some desc => s!"/-- {desc} -/\n"
-    | none => ""
-  let variants := def_.enumValues.map fun v =>
-    let leanName := toCamelCase v  -- Convert PascalCase/snake_case to camelCase
-    s!"  | {leanName}"
-  let variantsStr := String.intercalate "\n" variants
-  let toJsonCases := def_.enumValues.map fun v =>
-    let leanName := toCamelCase v
-    s!"    | .{leanName} => \"{v}\""
-  let toJsonStr := String.intercalate "\n" toJsonCases
-  let fromJsonCases := def_.enumValues.map fun v =>
-    let leanName := toCamelCase v
-    s!"    | \"{v}\" => .ok {typeName}.{leanName}"
-  let fromJsonStr := String.intercalate "\n" fromJsonCases
+  let docComment := def_.description.map (s!"/-- {·} -/\n") |>.getD ""
+  let variants := def_.enumValues.map (s!"  | {toCamelCase ·}") |> String.intercalate "\n"
+  let toJsonCases := def_.enumValues.map fun v => s!"    | .{toCamelCase v} => \"{v}\""
+  let fromJsonCases := def_.enumValues.map fun v => s!"    | \"{v}\" => .ok {typeName}.{toCamelCase v}"
   s!"{docComment}inductive {typeName} where
-{variantsStr}
+{variants}
   deriving Inhabited, BEq, Repr
 
 instance : ToJson {typeName} where
   toJson
-{toJsonStr}
+{String.intercalate "\n" toJsonCases}
 
 instance : FromJson {typeName} where
   fromJson? j := do
     let str ← j.getStr?
     match str with
-{fromJsonStr}
+{String.intercalate "\n" fromJsonCases}
     | x => .error (\"invalid {typeName}: \" ++ x)"
 
-/-- Check if a type references the given type name (for detecting self-recursion). -/
-def typeReferencesName (typeStr : String) (name : String) : Bool :=
+def typeReferencesName (typeStr name : String) : Bool :=
   typeStr.splitOn " " |>.any (· == name)
 
-/-- Generate a tagged union inductive as a string. -/
-def genTaggedUnionString (def_ : SchemaDefinition) : String := Id.run do
-  let docComment := match def_.description with
-    | some desc => s!"/-- {desc} -/\n"
-    | none => ""
+def genTaggedUnionString (def_ : SchemaDefinition) : String :=
   let typeName := def_.name
   let discField := def_.discriminatorField
-  -- Check if this type is self-recursive
+  let docComment := def_.description.map (s!"/-- {·} -/\n") |>.getD ""
   let isSelfRecursive := def_.variants.any fun v =>
-    v.properties.any fun p =>
-      typeReferencesName (propertyToLeanType p) typeName
-  -- Generate inductive variants
+    v.properties.any fun p => typeReferencesName (propertyToLeanType p) typeName
+
+  -- Generate inductive variants (use camelCase for Lean field names)
   let variants := def_.variants.map fun v =>
     let variantName := toCamelCase v.discriminatorValue
     let params := v.properties.map fun p =>
-      let pType := propertyToLeanType p
-      s!"({p.name} : {pType})"
-    let paramsStr := String.intercalate " " params
-    if paramsStr.isEmpty then
-      s!"  | {variantName}"
-    else
-      s!"  | {variantName} {paramsStr}"
-  let variantsStr := String.intercalate "\n" variants
-  -- Generate toJson implementation
-  -- Use prefixed parameter names to avoid conflicts with constructor names
+      let fieldName := toCamelCase p.name
+      s!"({fieldName} : {propertyToLeanType p})"
+    if params.isEmpty then s!"  | {variantName}" else s!"  | {variantName} {String.intercalate " " params}"
+
+  -- Generate toJson (map camelCase params to snake_case JSON keys)
   let toJsonCases := def_.variants.map fun v =>
     let variantName := toCamelCase v.discriminatorValue
-    let paramNames := v.properties.map fun p => s!"p_{p.name}"
-    let paramsPattern := String.intercalate " " paramNames
+    let paramNames := v.properties.map fun p => s!"p_{toCamelCase p.name}"
     let fieldsList := v.properties.map fun p =>
-      let paramVar := s!"p_{p.name}"
-      -- For self-recursive types, use explicit toJson call
+      let paramVar := s!"p_{toCamelCase p.name}"
       if isSelfRecursive && typeReferencesName (propertyToLeanType p) typeName then
         let baseType := schemaTypeToLean p.schemaType
-        if baseType.startsWith "Array " then
-          s!"(\"{p.name}\", Json.arr ({paramVar}.map {typeName}.toJson))"
-        else
-          s!"(\"{p.name}\", {typeName}.toJson {paramVar})"
-      else
-        s!"(\"{p.name}\", Lean.toJson {paramVar})"
-    let fieldsStr := String.intercalate ", " fieldsList
-    let discriminatorPair := s!"(\"{discField}\", \"{v.discriminatorValue}\")"
-    if paramsPattern.isEmpty then
-      s!"  | {typeName}.{variantName} => Json.mkObj [{discriminatorPair}]"
-    else
-      s!"  | {typeName}.{variantName} {paramsPattern} => Json.mkObj [{discriminatorPair}, {fieldsStr}]"
-  let toJsonStr := String.intercalate "\n" toJsonCases
-  -- Generate fromJson implementation with explicit type annotation
+        if baseType.startsWith "Array " then s!"(\"{p.name}\", Json.arr ({paramVar}.map {typeName}.toJson))"
+        else s!"(\"{p.name}\", {typeName}.toJson {paramVar})"
+      else s!"(\"{p.name}\", Lean.toJson {paramVar})"
+    let discPair := s!"(\"{discField}\", \"{v.discriminatorValue}\")"
+    if paramNames.isEmpty then s!"  | {typeName}.{variantName} => Json.mkObj [{discPair}]"
+    else s!"  | {typeName}.{variantName} {String.intercalate " " paramNames} => Json.mkObj [{discPair}, {String.intercalate ", " fieldsList}]"
+
+  -- Generate fromJson (map snake_case JSON keys to camelCase params)
   let fromJsonCases := def_.variants.map fun v =>
     let variantName := toCamelCase v.discriminatorValue
     let bindings := v.properties.map fun p =>
+      let fieldName := toCamelCase p.name
       let pType := propertyToLeanType p
       let baseType := schemaTypeToLean p.schemaType
-      -- For self-recursive types, use explicit fromJson? call
       if isSelfRecursive && typeReferencesName pType typeName then
         if baseType.startsWith "Array " then
-          s!"    let {p.name}Json ← j.getObjValAs? (Array Json) \"{p.name}\"\n    let {p.name}List ← {p.name}Json.toList.mapM {typeName}.fromJson?\n    let {p.name} : {pType} := {p.name}List.toArray"
+          s!"    let {fieldName}Json ← j.getObjValAs? (Array Json) \"{p.name}\"\n    let {fieldName}List ← {fieldName}Json.toList.mapM {typeName}.fromJson?\n    let {fieldName} : {pType} := {fieldName}List.toArray"
         else if pType.startsWith "Option " then
-          s!"    let {p.name}Json := j.getObjVal? \"{p.name}\" |>.toOption\n    let {p.name} : {pType} ← match {p.name}Json with | some jv => {typeName}.fromJson? jv |>.map some | none => .ok none"
-        else
-          s!"    let {p.name}Json ← j.getObjVal? \"{p.name}\"\n    let {p.name} : {pType} ← {typeName}.fromJson? {p.name}Json"
-      else
-        s!"    let {p.name} : {pType} ← j.getObjValAs? _ \"{p.name}\""
-    let bindingsStr := String.intercalate "\n" bindings
-    let paramNames := v.properties.map (·.name)
-    let paramsCall := String.intercalate " " paramNames
-    let returnExpr := if paramsCall.isEmpty
-      then s!"{typeName}.{variantName}"
-      else s!"{typeName}.{variantName} {paramsCall}"
-    if bindingsStr.isEmpty then
-      s!"  | \"{v.discriminatorValue}\" => .ok ({returnExpr})"
-    else
-      s!"  | \"{v.discriminatorValue}\" => do\n{bindingsStr}\n    .ok ({returnExpr})"
-  let fromJsonStr := String.intercalate "\n" fromJsonCases
+          s!"    let {fieldName}Json := j.getObjVal? \"{p.name}\" |>.toOption\n    let {fieldName} : {pType} ← match {fieldName}Json with | some jv => {typeName}.fromJson? jv |>.map some | none => .ok none"
+        else s!"    let {fieldName}Json ← j.getObjVal? \"{p.name}\"\n    let {fieldName} : {pType} ← {typeName}.fromJson? {fieldName}Json"
+      else s!"    let {fieldName} : {pType} ← j.getObjValAs? _ \"{p.name}\""
+    let paramNames := v.properties.map fun p => toCamelCase p.name
+    let returnExpr := if paramNames.isEmpty then s!"{typeName}.{variantName}"
+      else s!"{typeName}.{variantName} {String.intercalate " " paramNames}"
+    if bindings.isEmpty then s!"  | \"{v.discriminatorValue}\" => .ok ({returnExpr})"
+    else s!"  | \"{v.discriminatorValue}\" => do\n{String.intercalate "\n" bindings}\n    .ok ({returnExpr})"
+
   s!"{docComment}inductive {typeName} where
-{variantsStr}
+{String.intercalate "\n" variants}
   deriving Inhabited, BEq, Repr
 
 partial def {typeName}.toJson : {typeName} → Json
-{toJsonStr}
+{String.intercalate "\n" toJsonCases}
 
 instance : ToJson {typeName} := ⟨{typeName}.toJson⟩
 
 partial def {typeName}.fromJson? (j : Json) : Except String {typeName} := do
   let discVal ← j.getObjValAs? String \"{discField}\"
   match discVal with
-{fromJsonStr}
+{String.intercalate "\n" fromJsonCases}
   | x => .error (\"invalid {typeName} {discField}: \" ++ x)
 
 instance : FromJson {typeName} := ⟨{typeName}.fromJson?⟩"
 
-/-! ## Command Elaborator -/
-
-/-- Generate Lean code for a single schema definition. -/
 def genDefinitionCode (def_ : SchemaDefinition) : String :=
   match def_.kind with
   | .object => genStructureString def_
   | .stringEnum => genEnumString def_
   | .taggedUnion => genTaggedUnionString def_
 
-/-- The main code generation function. Returns list of code blocks, one per type definition. -/
-def generateLeanCode (defs : List SchemaDefinition) : List String := Id.run do
-  -- Sort definitions by dependencies
-  let sortedDefs := topologicalSort defs
-  sortedDefs.map genDefinitionCode
+def generateLeanCode (defs : List SchemaDefinition) : List String :=
+  (topologicalSort defs).map genDefinitionCode
 
-/-- Parse and elaborate a single command string. -/
+/-! ## Command Elaborator -/
+
 def parseAndElabCommand (code : String) : CommandElabM Unit := do
   let env ← getEnv
-  -- Parse the code as a command
   match Parser.runParserCategory env `command code with
   | .error e => throwError "Failed to parse generated code: {e}\n\nCode:\n{code}"
   | .ok stx => elabCommand stx
 
-/-- Parse and elaborate multiple commands from a list of code strings.
-    Each string in the list is elaborated together as a unit. -/
 def parseAndElabMultipleCommands (codes : List String) : CommandElabM Unit := do
   for code in codes do
-    if !code.trimAsciiStart.toString.isEmpty then
-      -- Split the code into individual commands (separated by double newlines within)
-      let parts := code.splitOn "\n\n"
-      for part in parts do
-        if !part.trimAsciiStart.toString.isEmpty then
-          parseAndElabCommand part
+    for part in code.splitOn "\n\n" do
+      if !part.trimAsciiStart.toString.isEmpty then
+        parseAndElabCommand part
 
-/-- Syntax for the gen_types_from_schema command. -/
 syntax (name := genTypesFromSchema) "gen_types_from_schema" str : command
 
-/-- Elaborate the gen_types_from_schema command. -/
 @[command_elab genTypesFromSchema]
 def elabGenTypesFromSchema : CommandElab := fun stx => do
   match stx with
   | `(command| gen_types_from_schema $path:str) =>
     let schemaPath := path.getString
-    -- Resolve relative path from the source file's directory (not cwd)
     let srcFile := (← getFileName)
     let srcDir := System.FilePath.mk srcFile |>.parent.getD "."
-    let fullPath := if schemaPath.startsWith "/" then
-      System.FilePath.mk schemaPath
-    else
-      srcDir / schemaPath
+    let fullPath := if schemaPath.startsWith "/" then System.FilePath.mk schemaPath else srcDir / schemaPath
     let jsonStr ← IO.FS.readFile fullPath
     let json ← match Json.parse jsonStr with
       | .ok j => pure j
@@ -549,11 +372,8 @@ def elabGenTypesFromSchema : CommandElab := fun stx => do
     let defs ← match parseSchema json with
       | .ok d => pure d
       | .error e => throwError "Schema parse error: {e}"
-    -- Generate the code as a list of definition blocks
     let codes := generateLeanCode defs
-    -- Log the generated code for debugging
     logInfo m!"Generated {defs.length} type definitions from schema"
-    -- Parse and elaborate each definition
     parseAndElabMultipleCommands codes
   | _ => throwUnsupportedSyntax
 

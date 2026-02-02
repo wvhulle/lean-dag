@@ -62,7 +62,7 @@ def AnnotatedTextTree.plain (s : String) : AnnotatedTextTree := .text s
 
 /-- Wrap text with a diff tag. -/
 def AnnotatedTextTree.withDiff (t : AnnotatedTextTree) (tag : SubexpressionDiffTag) : AnnotatedTextTree :=
-  .tag { diff_status := some tag } t
+  .tag { diffStatus := some tag } t
 
 /-- Extract plain text, stripping all tags. -/
 partial def AnnotatedTextTree.toPlainText : AnnotatedTextTree → String
@@ -86,12 +86,12 @@ instance : BEq ProofDagTacticNode where
   beq a b := a.id == b.id
 
 instance : BEq CompleteProofDag where
-  beq a b := a.nodes.toList == b.nodes.toList && a.root_node_id == b.root_node_id && a.orphans == b.orphans
+  beq a b := a.nodes.toList == b.nodes.toList && a.rootNodeId == b.rootNodeId && a.orphans == b.orphans
 
 instance : BEq FunctionalDagNode where
   beq a b := a.id == b.id
 
 instance : BEq CompleteFunctionalDag where
-  beq a b := a.nodes.toList == b.nodes.toList && a.root_node_id == b.root_node_id && a.orphans == b.orphans
+  beq a b := a.nodes.toList == b.nodes.toList && a.rootNodeId == b.rootNodeId && a.orphans == b.orphans
 
 end LeanDag

@@ -72,33 +72,68 @@ def sendShowDocument (uri : String) (line : Nat) (character : Nat) : IO Unit := 
   | none =>
     logToFile "No server request emitter available"
 
-/-- Default TCP port for TUI server. -/
-def defaultTcpPort : UInt16 := 9742
+/-- Default port range for TUI servers. Each worker gets a unique port from this range. -/
+def defaultPortRangeMin : UInt16 := 9742
+def defaultPortRangeMax : UInt16 := 9842
 
-/-- Get TCP port from environment or use default. -/
-def getTcpPort : IO UInt16 := do
-  if let some portStr ← IO.getEnv "LEAN_DAG_TCP_PORT" then
-    if let some n := portStr.toNat? then
-      if n > 0 && n < 65536 then
-        return n.toUInt16
-  return defaultTcpPort
+/-- Parse port from environment variable string. -/
+def parsePort (s : String) (default_ : UInt16) : UInt16 :=
+  match s.toNat? with
+  | some n => if n > 0 && n < 65536 then n.toUInt16 else default_
+  | none => default_
 
-/-- Lazily start the TCP server on first use. Returns the server if available. -/
-def ensureTuiServer : IO (Option TcpServer) := do
+/-- Get TCP port range from environment or use defaults. -/
+def getPortRange : IO (UInt16 × UInt16) := do
+  let minPort ← match ← IO.getEnv "LEAN_DAG_PORT_MIN" with
+    | some s => pure (parsePort s defaultPortRangeMin)
+    | none => pure defaultPortRangeMin
+  let maxPort ← match ← IO.getEnv "LEAN_DAG_PORT_MAX" with
+    | some s => pure (parsePort s defaultPortRangeMax)
+    | none => pure defaultPortRangeMax
+  return (minPort, maxPort)
+
+/-- Try to create a TcpServer on the given port. Returns none if port is in use. -/
+def tryCreateServer (port : UInt16) (mode : ServerOperatingMode)
+    (fileUri : Option String) (minPort maxPort : UInt16) : IO (Option TcpServer) := do
+  try
+    let srv ← TcpServer.create port mode fileUri minPort maxPort
+    return some srv
+  catch _ =>
+    return none
+
+/-- Find an available port and create the server. -/
+def createServerWithAvailablePort (minPort maxPort : UInt16) (mode : ServerOperatingMode)
+    (fileUri : Option String) : IO (Option TcpServer) := do
+  let mut port := minPort
+  while port ≤ maxPort do
+    if let some srv ← tryCreateServer port mode fileUri minPort maxPort then
+      return some srv
+    port := port + 1
+  return none
+
+/-- Lazily start the TCP server on first use. Returns the server if available.
+    The fileUri parameter is used to identify which file this worker is handling. -/
+def ensureTuiServer (fileUri : Option String := none) : IO (Option TcpServer) := do
   match ← tuiServerRef.get with
   | some srv => return some srv
   | none =>
     logToFile "ensureTuiServer: starting TCP server lazily"
     try
-      let port ← getTcpPort
-      logToFile s!"Creating TCP server on port {port}"
-      let srv ← TcpServer.create port .library
-      logToFile "TCP server created, starting..."
-      srv.start
-      tuiServerRef.set (some srv)
-      logToFile s!"TCP server started on port {port}"
-      IO.eprintln s!"[LeanDag] TCP server started on port {port}"
-      return some srv
+      let (minPort, maxPort) ← getPortRange
+      let fileDesc := fileUri.getD "unknown file"
+      logToFile s!"Looking for available port in range {minPort}-{maxPort} for {fileDesc}"
+      match ← createServerWithAvailablePort minPort maxPort .library fileUri with
+      | some srv =>
+        logToFile s!"TCP server created on port {srv.port}"
+        srv.start
+        tuiServerRef.set (some srv)
+        logToFile s!"TCP server started on port {srv.port} for {fileDesc}"
+        IO.eprintln s!"[LeanDag] TCP server started on port {srv.port} for {fileDesc}"
+        return some srv
+      | none =>
+        logToFile s!"No available port in range {minPort}-{maxPort}"
+        IO.eprintln s!"[LeanDag] No available port in range {minPort}-{maxPort}"
+        return none
     catch e =>
       logToFile s!"Failed to start TCP server: {e}"
       IO.eprintln s!"[LeanDag] Failed to start TCP server: {e}"
@@ -152,16 +187,16 @@ def rebroadcastProofDag : RequestM (RequestTask Unit) := do
   -- Only rebroadcast if same document
   if doc.meta.uri != uri then return .pure ()
 
-  let srv? ← ensureTuiServer
+  let srv? ← ensureTuiServer (some (toString uri))
   let some srv := srv? | return .pure ()
 
   RequestM.withWaitFindSnapAtPos position fun snap => do
     if isTermModeTree snap.infoTree then
       let functionalDag ← computeFunctionalDag snap position
-      srv.broadcast (.functionalDag functionalDag position uri)
+      srv.broadcast (.functionalDag (uri := uri) (position := position) (dag := functionalDag))
     else
       let proofDag ← computeProofDag snap position
-      srv.broadcast (.proofDag proofDag position uri)
+      srv.broadcast (.proofDag (uri := uri) (position := position) (dag := proofDag))
 
 /-- Compute and broadcast proof DAG when hover request is received. -/
 def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask Unit) := do
@@ -173,12 +208,12 @@ def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask 
   lastCursorRef.set (some (uri, position))
 
   -- Ensure TCP server is running and get reference
-  let srv? ← ensureTuiServer
+  let srv? ← ensureTuiServer (some (toString uri))
   let some srv := srv? | return .pure ()
 
   -- Broadcast cursor position immediately
   let cursorInfo : EditorCursorPosition := { uri, position, method := "hover" }
-  srv.broadcast (.cursor cursorInfo.uri cursorInfo.position cursorInfo.method)
+  srv.broadcast (.cursor (uri := cursorInfo.uri) (position := cursorInfo.position) (method := cursorInfo.method))
 
   -- Capture the server request emitter if not already captured
   if (← serverRequestEmitterRef.get).isNone then
@@ -193,10 +228,10 @@ def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask 
   RequestM.withWaitFindSnapAtPos position fun snap => do
     if isTermModeTree snap.infoTree then
       let functionalDag ← computeFunctionalDag snap position
-      srv.broadcast (.functionalDag functionalDag position uri)
+      srv.broadcast (.functionalDag (uri := uri) (position := position) (dag := functionalDag))
     else
       let proofDag ← computeProofDag snap position
-      srv.broadcast (.proofDag proofDag position uri)
+      srv.broadcast (.proofDag (uri := uri) (position := position) (dag := proofDag))
 
 builtin_initialize
   Lean.Server.chainLspRequestHandler "textDocument/hover" Lsp.HoverParams (Option Lsp.Hover)

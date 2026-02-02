@@ -3,7 +3,6 @@
   "$id": "https://github.com/wvhulle/lean-dag/protocol-schema.json",
   "title": "LeanDag TUI Protocol",
   "description": "JSON protocol for communication between lean-dag and lean-tui. All field names use snake_case convention. Discriminator fields: 'type' for message/command variants (following LSP conventions), 'kind' for tagged text variants (following Lean's internal TaggedText structure). Messages are newline-delimited JSON objects.",
-
   "$defs": {
     "LineCharacterPosition": {
       "type": "object",
@@ -20,10 +19,12 @@
           "description": "Zero-indexed character offset within the line, measured in UTF-16 code units. For ASCII text, this equals the column number minus one."
         }
       },
-      "required": ["line", "character"],
+      "required": [
+        "line",
+        "character"
+      ],
       "additionalProperties": false
     },
-
     "FullyQualifiedDocumentPosition": {
       "type": "object",
       "description": "A fully-qualified position within a document, combining a file URI with a line/character position. Used when referencing locations across different files in the workspace.",
@@ -38,22 +39,32 @@
           "description": "The position within the document specified by the URI."
         }
       },
-      "required": ["uri", "position"],
+      "required": [
+        "uri",
+        "position"
+      ],
       "additionalProperties": false
     },
-
     "ServerOperatingMode": {
       "type": "string",
-      "enum": ["Library", "Standalone"],
+      "enum": [
+        "Library",
+        "Standalone"
+      ],
       "description": "Indicates how the lean-dag server is running. 'Library' mode uses 'lake serve' and requires the target project to have 'import LeanDag' in its source files. 'Standalone' mode uses the lean-dag binary directly and works without any imports, but may have reduced functionality."
     },
-
     "SubexpressionDiffTag": {
       "type": "string",
-      "enum": ["wasChanged", "willChange", "wasDeleted", "willDelete", "wasInserted", "willInsert"],
+      "enum": [
+        "wasChanged",
+        "willChange",
+        "wasDeleted",
+        "willDelete",
+        "wasInserted",
+        "willInsert"
+      ],
       "description": "Describes how a subexpression differs between the proof state before and after a tactic application. The 'was*' variants indicate changes visible in the 'before' view, while 'will*' variants indicate changes visible in the 'after' view. Used by the TUI to render diff highlighting with appropriate colors."
     },
-
     "SubexpressionAnnotation": {
       "type": "object",
       "description": "Metadata attached to a subexpression within a tagged text tree. Currently contains only diff information, but may be extended with additional subexpression metadata in the future (e.g., hover information, semantic tokens).",
@@ -65,41 +76,54 @@
       },
       "additionalProperties": false
     },
-
     "AnnotatedTextTree": {
       "oneOf": [
         {
           "type": "object",
           "description": "A leaf node containing plain text with no nested structure or annotations.",
           "properties": {
-            "kind": { "const": "text" },
+            "kind": {
+              "const": "text"
+            },
             "text": {
               "type": "string",
               "description": "The raw text content to display. May contain whitespace and newlines."
             }
           },
-          "required": ["kind", "text"],
+          "required": [
+            "kind",
+            "text"
+          ],
           "additionalProperties": false
         },
         {
           "type": "object",
           "description": "An internal node that concatenates multiple child elements. Used to build complex expressions from smaller parts while preserving the tree structure.",
           "properties": {
-            "kind": { "const": "append" },
+            "kind": {
+              "const": "append"
+            },
             "children": {
               "type": "array",
-              "items": { "$ref": "#/$defs/AnnotatedTextTree" },
+              "items": {
+                "$ref": "#/$defs/AnnotatedTextTree"
+              },
               "description": "The child elements to concatenate in order. The final displayed text is the concatenation of all children's text content."
             }
           },
-          "required": ["kind", "children"],
+          "required": [
+            "kind",
+            "children"
+          ],
           "additionalProperties": false
         },
         {
           "type": "object",
           "description": "A tagged node that wraps content with subexpression metadata. Used to attach diff highlighting and other annotations to specific parts of an expression.",
           "properties": {
-            "kind": { "const": "tag" },
+            "kind": {
+              "const": "tag"
+            },
             "subexpression_info": {
               "$ref": "#/$defs/SubexpressionAnnotation",
               "description": "Metadata for this subexpression, including diff status for before/after highlighting."
@@ -109,13 +133,16 @@
               "description": "The wrapped content that this tag applies to. Can be any variant, allowing for nested tags."
             }
           },
-          "required": ["kind", "subexpression_info", "tagged_content"],
+          "required": [
+            "kind",
+            "subexpression_info",
+            "tagged_content"
+          ],
           "additionalProperties": false
         }
       ],
       "description": "A recursive tree structure for rich text with optional annotations per subexpression. Mirrors Lean's internal TaggedText type and supports diff highlighting for before/after proof state comparison."
     },
-
     "NavigationTargetLocation": {
       "type": "object",
       "description": "A navigation target for go-to-definition or go-to-type-definition commands. Contains the file URI and position where the definition or type is located.",
@@ -130,10 +157,12 @@
           "description": "The position within the file where the definition starts, typically at the beginning of the identifier."
         }
       },
-      "required": ["uri", "position"],
+      "required": [
+        "uri",
+        "position"
+      ],
       "additionalProperties": false
     },
-
     "PreresolvedNavigationTargets": {
       "type": "object",
       "description": "Pre-resolved navigation locations for an expression, hypothesis, or goal. These are computed eagerly when building the proof DAG so the TUI can navigate without additional server round-trips.",
@@ -149,7 +178,6 @@
       },
       "additionalProperties": false
     },
-
     "ProofContextHypothesis": {
       "type": "object",
       "description": "Information about a hypothesis (local variable or assumption) in the proof context. Hypotheses appear in the left panel of the TUI and can be referenced by tactics.",
@@ -190,10 +218,13 @@
           "description": "Pre-resolved go-to-definition and go-to-type-definition locations for this hypothesis. Allows the TUI to navigate without additional server queries."
         }
       },
-      "required": ["name", "type", "id"],
+      "required": [
+        "name",
+        "type",
+        "id"
+      ],
       "additionalProperties": false
     },
-
     "ProofObligation": {
       "type": "object",
       "description": "Information about a goal (proof obligation) that needs to be solved. Goals appear in the main proof panel and represent what the user needs to prove.",
@@ -220,30 +251,35 @@
           "description": "Pre-resolved navigation locations for the goal type. Allows navigating to the definition of the type being proven."
         }
       },
-      "required": ["type", "id"],
+      "required": [
+        "type",
+        "id"
+      ],
       "additionalProperties": false
     },
-
     "TacticProofState": {
       "type": "object",
       "description": "A complete proof state containing all goals and hypotheses at a specific point in the proof. Each tactic node has a state before and after the tactic application.",
       "properties": {
         "goals": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProofObligation" },
+          "items": {
+            "$ref": "#/$defs/ProofObligation"
+          },
           "default": [],
           "description": "The list of open goals that need to be proven. The first goal is typically the 'focused' goal that the next tactic will operate on. Empty list means the proof is complete."
         },
         "hypotheses": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProofContextHypothesis" },
+          "items": {
+            "$ref": "#/$defs/ProofContextHypothesis"
+          },
           "default": [],
           "description": "The hypotheses available in the proof context. These are the assumptions and local variables that tactics can use. Ordered by declaration order in the source."
         }
       },
       "additionalProperties": false
     },
-
     "TacticApplicationInfo": {
       "type": "object",
       "description": "Information about a single tactic application in the proof. Contains the tactic text and analysis of what hypotheses and theorems it references.",
@@ -254,21 +290,26 @@
         },
         "hypothesis_dependencies": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Names of hypotheses from the proof context that this tactic directly uses. Used to draw dependency edges in the DAG visualization and highlight relevant hypotheses."
         },
         "referenced_theorems": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Fully qualified names of theorems, lemmas, or definitions referenced by this tactic. Includes explicit references (e.g., in 'apply' or 'simp') and may include auto-discovered references."
         }
       },
-      "required": ["text"],
+      "required": [
+        "text"
+      ],
       "additionalProperties": false
     },
-
     "ProofDagTacticNode": {
       "type": "object",
       "description": "A node in the proof DAG representing a single tactic application. Contains the tactic, its position in source, the proof state before and after, and structural information about parent/child relationships.",
@@ -296,13 +337,19 @@
         },
         "new_hypothesis_indices": {
           "type": "array",
-          "items": { "type": "integer", "minimum": 0 },
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
           "default": [],
           "description": "Indices into proof_state_after.hypotheses identifying which hypotheses were introduced by this tactic. Used to highlight newly introduced hypotheses in the TUI."
         },
         "children": {
           "type": "array",
-          "items": { "type": "integer", "minimum": 0 },
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
           "default": [],
           "description": "Node IDs of tactics that follow this one in the proof tree. Multiple children occur when a tactic spawns multiple subgoals (e.g., 'constructor', 'cases')."
         },
@@ -323,17 +370,24 @@
           "description": "True if this tactic contains inline 'by' blocks with unsolved goals. Indicates that the proof has nested incomplete subproofs that need attention."
         }
       },
-      "required": ["id", "tactic", "position", "proof_state_before", "proof_state_after"],
+      "required": [
+        "id",
+        "tactic",
+        "position",
+        "proof_state_before",
+        "proof_state_after"
+      ],
       "additionalProperties": false
     },
-
     "CompleteProofDag": {
       "type": "object",
       "description": "The complete proof DAG (directed acyclic graph) for a theorem or definition. Contains all tactic nodes and their relationships, plus metadata about the proof structure.",
       "properties": {
         "nodes": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProofDagTacticNode" },
+          "items": {
+            "$ref": "#/$defs/ProofDagTacticNode"
+          },
           "default": [],
           "description": "All nodes in the proof DAG. Nodes are ordered by their position in the source file, but the parent/child relationships define the logical tree structure."
         },
@@ -357,20 +411,26 @@
         },
         "orphans": {
           "type": "array",
-          "items": { "type": "integer", "minimum": 0 },
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
           "default": [],
           "description": "Node IDs of tactics that don't have a parent in the tree structure. These may represent disconnected proof fragments or parsing edge cases."
         }
       },
       "additionalProperties": false
     },
-
     "BindingKind": {
       "type": "string",
-      "enum": ["let_bind", "fun_param", "match_var", "for_var"],
+      "enum": [
+        "let_bind",
+        "fun_param",
+        "match_var",
+        "for_var"
+      ],
       "description": "The kind of binding in term-mode code. 'let_bind' is a let-binding, 'fun_param' is a function parameter, 'match_var' is a pattern match variable, 'for_var' is a for-loop variable."
     },
-
     "LocalBinding": {
       "type": "object",
       "description": "Information about a local binding (variable) in term-mode code. Analogous to ProofContextHypothesis but for functional programming context.",
@@ -415,10 +475,14 @@
           "description": "Pre-resolved go-to-definition and go-to-type-definition locations for this binding."
         }
       },
-      "required": ["name", "type", "id", "binding_kind"],
+      "required": [
+        "name",
+        "type",
+        "id",
+        "binding_kind"
+      ],
       "additionalProperties": false
     },
-
     "FunctionalDagNode": {
       "type": "object",
       "description": "A node in the functional DAG representing a term-mode expression step. Analogous to ProofDagTacticNode but for functional code showing data flow.",
@@ -434,19 +498,26 @@
         },
         "bindings_before": {
           "type": "array",
-          "items": { "$ref": "#/$defs/LocalBinding" },
+          "items": {
+            "$ref": "#/$defs/LocalBinding"
+          },
           "default": [],
           "description": "Variables in scope before this expression is evaluated."
         },
         "bindings_after": {
           "type": "array",
-          "items": { "$ref": "#/$defs/LocalBinding" },
+          "items": {
+            "$ref": "#/$defs/LocalBinding"
+          },
           "default": [],
           "description": "Variables in scope after this expression is evaluated (includes new bindings)."
         },
         "new_binding_indices": {
           "type": "array",
-          "items": { "type": "integer", "minimum": 0 },
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
           "default": [],
           "description": "Indices into bindings_after identifying which bindings were introduced by this expression."
         },
@@ -460,7 +531,10 @@
         },
         "children": {
           "type": "array",
-          "items": { "type": "integer", "minimum": 0 },
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
           "default": [],
           "description": "Node IDs of child expressions (e.g., pattern match branches, if-else branches)."
         },
@@ -476,17 +550,22 @@
           "description": "The depth of this node in the expression tree."
         }
       },
-      "required": ["id", "expression", "position"],
+      "required": [
+        "id",
+        "expression",
+        "position"
+      ],
       "additionalProperties": false
     },
-
     "CompleteFunctionalDag": {
       "type": "object",
       "description": "The complete functional DAG for a term-mode definition. Shows data flow through let-bindings, function calls, and pattern matches. Analogous to CompleteProofDag.",
       "properties": {
         "nodes": {
           "type": "array",
-          "items": { "$ref": "#/$defs/FunctionalDagNode" },
+          "items": {
+            "$ref": "#/$defs/FunctionalDagNode"
+          },
           "default": [],
           "description": "All nodes in the functional DAG ordered by source position."
         },
@@ -502,7 +581,9 @@
         },
         "initial_bindings": {
           "type": "array",
-          "items": { "$ref": "#/$defs/LocalBinding" },
+          "items": {
+            "$ref": "#/$defs/LocalBinding"
+          },
           "default": [],
           "description": "The function parameters available at the start of the definition."
         },
@@ -516,14 +597,16 @@
         },
         "orphans": {
           "type": "array",
-          "items": { "type": "integer", "minimum": 0 },
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
           "default": [],
           "description": "Node IDs of expressions that don't have a parent in the tree structure."
         }
       },
       "additionalProperties": false
     },
-
     "EditorCursorPosition": {
       "type": "object",
       "description": "Information about the current cursor position in the editor. Sent from the editor to lean-dag to request proof information at that location.",
@@ -542,30 +625,62 @@
           "description": "The LSP method that triggered this cursor update (e.g., 'textDocument/hover', 'textDocument/definition'). Used for debugging and may influence response behavior."
         }
       },
-      "required": ["uri", "position", "method"],
+      "required": [
+        "uri",
+        "position",
+        "method"
+      ],
       "additionalProperties": false
     },
-
     "ServerToClientMessage": {
       "oneOf": [
         {
           "type": "object",
-          "description": "Sent when the TUI client first connects to the lean-dag server. Provides information about the server's operating mode.",
+          "description": "Sent when the TUI client first connects to the lean-dag server. Provides information about the server's operating mode, the port this worker is using, and the file it is handling.",
           "properties": {
-            "type": { "const": "Connected" },
+            "type": {
+              "const": "Connected"
+            },
             "server_mode": {
               "$ref": "#/$defs/ServerOperatingMode",
               "description": "The mode in which the server is running, affecting available features and how the client should interact."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "The TCP port this worker's server is listening on. Each worker (handling one file) gets a unique port from the configured range."
+            },
+            "file_uri": {
+              "type": "string",
+              "format": "uri",
+              "description": "The file URI this worker is handling. In library mode with per-worker ports, each file gets its own worker and port."
+            },
+            "port_range_min": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "The minimum port in the configured port range. Clients can scan this range to discover active workers."
+            },
+            "port_range_max": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "The maximum port in the configured port range. Clients can scan this range to discover active workers."
             }
           },
-          "required": ["type"],
+          "required": [
+            "type"
+          ],
           "additionalProperties": false
         },
         {
           "type": "object",
           "description": "Sent when the editor cursor moves to a new position. Allows the TUI to track cursor location even when no proof DAG is available.",
           "properties": {
-            "type": { "const": "Cursor" },
+            "type": {
+              "const": "Cursor"
+            },
             "uri": {
               "type": "string",
               "format": "uri",
@@ -580,14 +695,21 @@
               "description": "The LSP method that triggered the cursor update."
             }
           },
-          "required": ["type", "uri", "position", "method"],
+          "required": [
+            "type",
+            "uri",
+            "position",
+            "method"
+          ],
           "additionalProperties": false
         },
         {
           "type": "object",
           "description": "Sent when a proof DAG is available at the current cursor position. Contains the complete proof structure for rendering in the TUI.",
           "properties": {
-            "type": { "const": "ProofDag" },
+            "type": {
+              "const": "ProofDag"
+            },
             "uri": {
               "type": "string",
               "format": "uri",
@@ -602,14 +724,20 @@
               "description": "The extracted proof DAG, or null if no proof was found at the cursor position."
             }
           },
-          "required": ["type", "uri", "position"],
+          "required": [
+            "type",
+            "uri",
+            "position"
+          ],
           "additionalProperties": false
         },
         {
           "type": "object",
           "description": "Sent when a functional DAG is available at the current cursor position in term-mode code. Contains the dataflow structure for rendering in the TUI.",
           "properties": {
-            "type": { "const": "FunctionalDag" },
+            "type": {
+              "const": "FunctionalDag"
+            },
             "uri": {
               "type": "string",
               "format": "uri",
@@ -624,33 +752,43 @@
               "description": "The extracted functional DAG, or null if no term-mode definition was found at the cursor position."
             }
           },
-          "required": ["type", "uri", "position"],
+          "required": [
+            "type",
+            "uri",
+            "position"
+          ],
           "additionalProperties": false
         },
         {
           "type": "object",
           "description": "Sent when an error occurs during proof DAG extraction or other server operations. The TUI should display the error message to the user.",
           "properties": {
-            "type": { "const": "Error" },
+            "type": {
+              "const": "Error"
+            },
             "error": {
               "type": "string",
               "description": "A human-readable error message describing what went wrong. May include technical details for debugging."
             }
           },
-          "required": ["type", "error"],
+          "required": [
+            "type",
+            "error"
+          ],
           "additionalProperties": false
         }
       ],
       "description": "Messages sent from the lean-dag server to the lean-tui client. Each message is a single JSON object terminated by a newline."
     },
-
     "ClientToServerCommand": {
       "oneOf": [
         {
           "type": "object",
           "description": "Request the editor to navigate to a specific position. Used when the user selects a navigation target in the TUI (e.g., go-to-definition on a hypothesis).",
           "properties": {
-            "type": { "const": "Navigate" },
+            "type": {
+              "const": "Navigate"
+            },
             "uri": {
               "type": "string",
               "format": "uri",
@@ -661,14 +799,20 @@
               "description": "The position within the file to place the cursor."
             }
           },
-          "required": ["type", "uri", "position"],
+          "required": [
+            "type",
+            "uri",
+            "position"
+          ],
           "additionalProperties": false
         },
         {
           "type": "object",
           "description": "Explicitly request a proof DAG at a specific position. Deprecated: the server now sends proof DAGs automatically on hover events. Kept for backwards compatibility.",
           "properties": {
-            "type": { "const": "GetProofDag" },
+            "type": {
+              "const": "GetProofDag"
+            },
             "uri": {
               "type": "string",
               "format": "uri",
@@ -684,14 +828,17 @@
               "description": "The extraction mode. Currently only 'tree' is supported. Reserved for future DAG visualization modes."
             }
           },
-          "required": ["type", "uri", "position"],
+          "required": [
+            "type",
+            "uri",
+            "position"
+          ],
           "additionalProperties": false
         }
       ],
       "description": "Commands sent from the lean-tui client to the lean-dag server. Each command is a single JSON object terminated by a newline."
     }
   },
-
   "type": "object",
   "properties": {
     "messages": {

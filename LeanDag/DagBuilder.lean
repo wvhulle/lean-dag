@@ -79,7 +79,7 @@ def CompleteProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
       | none => hypsBefore
     -- Compute new hypotheses: indices in hypsAfter for hyps not in hypsBefore
     let hypIdsBefore : Std.HashSet String := Std.HashSet.ofArray (hypsBefore.map (·.id))
-    let new_hypothesis_indices := Id.run do
+    let newHypothesisIndices := Id.run do
       let mut result : Array Nat := #[]
       for h : i in [:hypsAfter.size] do
         let hyp := hypsAfter[i]!
@@ -89,15 +89,15 @@ def CompleteProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
     -- Build raw states (without diff)
     let rawStateBefore : TacticProofState := { goals := #[goalBefore], hypotheses := hypsBefore }
     let rawStateAfter : TacticProofState := { goals := goalsAfter, hypotheses := hypsAfter }
-    -- Apply diff highlighting: proof_state_before shows what will change, proof_state_after shows what changed
-    let proof_state_before := rawStateBefore.diffBefore rawStateAfter
-    let proof_state_after := rawStateBefore.diffAfter rawStateAfter
+    -- Apply diff highlighting: proofStateBefore shows what will change, proofStateAfter shows what changed
+    let proofStateBefore := rawStateBefore.diffBefore rawStateAfter
+    let proofStateAfter := rawStateBefore.diffAfter rawStateAfter
     { id := idx
-      tactic := { text := step.tacticString, hypothesis_dependencies := step.hypothesis_dependencies.toArray, referenced_theorems := (step.theorems.map (·.name)).toArray }
+      tactic := { text := step.tacticString, hypothesisDependencies := step.hypothesisDependencies.toArray, referencedTheorems := (step.theorems.map (·.name)).toArray }
       position := step.position.start  -- Coerces to LineCharacterPosition
-      proof_state_before
-      proof_state_after
-      new_hypothesis_indices
+      proofStateBefore
+      proofStateAfter
+      newHypothesisIndices
       children := (childrenOf[idx]?.getD []).toArray
       parent := parentOf[idx]?.join
       depth := depths[idx]?.getD 0 }
@@ -109,7 +109,7 @@ def CompleteProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
     | [] => (none, #[])
     | r :: rest => (some r, rest.toArray)
   -- Find current node: the node whose position is closest to (but not after) cursor
-  let current_node_id : Option Nat := Id.run do
+  let currentNodeId : Option Nat := Id.run do
     let mut best : Option Nat := none
     let mut bestPos : Lsp.Position := ⟨0, 0⟩
     for h : i in [:nodes.size] do
@@ -122,6 +122,6 @@ def CompleteProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
           best := some node.id
           bestPos := pos
     return best
-  { nodes, root_node_id := root, orphans, current_node_id, initial_proof_state := some nodes[0]!.proof_state_before, definition_name := definitionName }
+  { nodes, rootNodeId := root, orphans, currentNodeId, initialProofState := some nodes[0]!.proofStateBefore, definitionName := definitionName }
 
 end LeanDag

@@ -165,13 +165,13 @@ structure SourceRange where
   deriving Inhabited, ToJson, FromJson
 
 structure ParsedStep where
-  tacticString           : String
-  goalBefore             : ParsedGoal
-  goalsAfter             : List ParsedGoal
-  hypothesis_dependencies : List String
-  spawnedGoals           : List ParsedGoal
-  position               : SourceRange
-  theorems               : List TheoremSignature
+  tacticString            : String
+  goalBefore              : ParsedGoal
+  goalsAfter              : List ParsedGoal
+  hypothesisDependencies  : List String
+  spawnedGoals            : List ParsedGoal
+  position                : SourceRange
+  theorems                : List TheoremSignature
   deriving Inhabited
 
 structure ParseResult where
@@ -180,9 +180,9 @@ structure ParseResult where
 
 /-- A single goal transformation from a tactic application. -/
 structure GoalChange where
-  hypothesis_dependencies : List String
-  goalBefore              : ParsedGoal
-  goalsAfter              : List ParsedGoal
+  hypothesisDependencies : List String
+  goalBefore             : ParsedGoal
+  goalsAfter             : List ParsedGoal
   deriving Inhabited
 
 /-! ## Parsing Helpers -/
@@ -234,7 +234,7 @@ def formatHypothesis (ppCtx : PPContext) (hypDecl : LocalDecl) (binderCache : Bi
     : IO LeanDag.ProofContextHypothesis := do
   let typeStr := (← ppExprWithInfos ppCtx hypDecl.type).fmt.pretty
   let valueStr ← hypDecl.value?.mapM fun v => do pure (← ppExprWithInfos ppCtx v).fmt.pretty
-  let navigation_locations : Option LeanDag.PreresolvedNavigationTargets := match binderCache.get? hypDecl.fvarId with
+  let navigationLocations : Option LeanDag.PreresolvedNavigationTargets := match binderCache.get? hypDecl.fvarId with
     | some pos => some { definition := some { uri := fileUri, position := pos } }
     | none => none
   return {
@@ -242,9 +242,9 @@ def formatHypothesis (ppCtx : PPContext) (hypDecl : LocalDecl) (binderCache : Bi
     type := LeanDag.AnnotatedTextTree.plain typeStr
     value := valueStr.map LeanDag.AnnotatedTextTree.plain
     id := hypDecl.fvarId.name.toString
-    is_proof_term := hypDecl.type.isProp
-    is_typeclass_instance := false
-    navigation_locations
+    isProofTerm := hypDecl.type.isProp
+    isTypeclassInstance := false
+    navigationLocations
   }
 
 /-- Format goal directly to ParsedGoal with ProofObligation. -/
@@ -262,7 +262,7 @@ def formatGoal (ctx : ContextInfo) (id : MVarId) (binderCache : BinderCache) (fi
     type := LeanDag.AnnotatedTextTree.plain typeStr
     username := decl.userName.toString.filterNameOpt
     id := id.name.toString
-    navigation_locations := none
+    navigationLocations := none
   }
   return { obligation, hypotheses := hyps, mvarId := id }
 
@@ -282,11 +282,11 @@ def computeGoalChanges (pctx : ParserContext) (ctx : ContextInfo) (tInfo : Elab.
   uniqueBefore.filterMapM fun goalBefore => do
     let some goalDecl := tInfo.mctxBefore.findDecl? goalBefore | return none
     let assignedMVars ← ctx.runMetaM goalDecl.lctx (findAssignedMVars goalBefore tInfo.mctxAfter)
-    let hypothesis_dependencies ← ctx.runMetaM goalDecl.lctx (findUsedHypotheses goalBefore goalDecl tInfo.mctxAfter)
+    let hypothesisDependencies ← ctx.runMetaM goalDecl.lctx (findUsedHypotheses goalBefore goalDecl tInfo.mctxAfter)
     let goalBefore ← formatGoal ppCtx goalBefore pctx.binderCache pctx.fileUri
     let goalsAfter ← (uniqueAfter.filter assignedMVars.contains).mapM fun id =>
       formatGoal ppCtx id pctx.binderCache pctx.fileUri
-    return some { hypothesis_dependencies, goalBefore, goalsAfter }
+    return some { hypothesisDependencies, goalBefore, goalsAfter }
 
 def formatRewriteSteps (stx : Syntax) (steps : List ParsedStep) : List ParsedStep :=
   match stx with
@@ -333,7 +333,7 @@ partial def parseTacticInfo (pctx : ParserContext) (ctx : ContextInfo) (info : I
   let newSteps := changes.filterMap fun c =>
     if existingGoals.elem c.goalBefore then none
     else some { tacticString, goalBefore := c.goalBefore, goalsAfter := c.goalsAfter,
-                hypothesis_dependencies := c.hypothesis_dependencies, spawnedGoals := orphanedGoals, position, theorems }
+                hypothesisDependencies := c.hypothesisDependencies, spawnedGoals := orphanedGoals, position, theorems }
   return { steps := newSteps ++ steps, allGoals }
 
 partial def visitNode (pctx : ParserContext) (ctx : ContextInfo) (info : Info) (results : List (Option ParseResult))

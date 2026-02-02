@@ -71,7 +71,7 @@ def formatBinding (ppCtx : PPContext) (decl : LocalDecl) (binderCache : BinderCa
     : IO ParsedBinding := do
   let typeStr := (← ppExprWithInfos ppCtx decl.type).fmt.pretty
   let valueStr ← decl.value?.mapM fun v => do pure (← ppExprWithInfos ppCtx v).fmt.pretty
-  let navigation_locations : Option PreresolvedNavigationTargets := match binderCache.get? decl.fvarId with
+  let navigationLocations : Option PreresolvedNavigationTargets := match binderCache.get? decl.fvarId with
     | some pos => some { definition := some { uri := fileUri, position := pos } }
     | none => none
   let binding : LocalBinding := {
@@ -79,10 +79,10 @@ def formatBinding (ppCtx : PPContext) (decl : LocalDecl) (binderCache : BinderCa
     type := .plain typeStr
     value := valueStr.map AnnotatedTextTree.plain
     id := decl.fvarId.name.toString
-    binding_kind := bindingKindFromDecl decl
-    is_implicit := decl.binderInfo == .implicit || decl.binderInfo == .strictImplicit
-    is_instance := decl.binderInfo == .instImplicit
-    navigation_locations
+    bindingKind := bindingKindFromDecl decl
+    isImplicit := decl.binderInfo == .implicit || decl.binderInfo == .strictImplicit
+    isInstance := decl.binderInfo == .instImplicit
+    navigationLocations
   }
   return { binding, fvarId := decl.fvarId }
 
@@ -189,10 +189,10 @@ def buildDag (steps : List ParsedTermStep) (position : Lsp.Position) (definition
       let node : FunctionalDagNode := {
         id := idx
         expression := .plain step.expression
-        bindings_before := (parentBindings.map (·.binding)).toArray
-        bindings_after := (step.bindings.map (·.binding)).toArray
-        new_binding_indices := newBindingIndices
-        expected_type := step.expectedType.map AnnotatedTextTree.plain
+        bindingsBefore := (parentBindings.map (·.binding)).toArray
+        bindingsAfter := (step.bindings.map (·.binding)).toArray
+        newBindingIndices := newBindingIndices
+        expectedType := step.expectedType.map AnnotatedTextTree.plain
         position := step.position
         children := #[] -- Will be filled in second pass
         parent := parentId
@@ -215,19 +215,19 @@ def buildDag (steps : List ParsedTermStep) (position : Lsp.Position) (definition
     let currentNodeId := nodesIndexed.findSome? fun (node, idx) =>
       if node.position.line <= position.line then some idx else none
 
-    -- Get initial bindings from first node's bindings_before
-    let initialBindings := nodesWithChildren[0]?.map (·.bindings_before) |>.getD #[]
+    -- Get initial bindings from first node's bindingsBefore
+    let initialBindings := nodesWithChildren[0]?.map (·.bindingsBefore) |>.getD #[]
 
     -- Get definition type from first step's expected type
     let definitionType := sortedSteps[0]?.bind (·.expectedType) |>.map AnnotatedTextTree.plain
 
     return {
       nodes := nodesWithChildren
-      root_node_id := rootNodeId
-      current_node_id := currentNodeId
-      initial_bindings := initialBindings
-      definition_name := definitionName
-      definition_type := definitionType
+      rootNodeId := rootNodeId
+      currentNodeId := currentNodeId
+      initialBindings := initialBindings
+      definitionName := definitionName
+      definitionType := definitionType
       orphans := #[]
     }
 

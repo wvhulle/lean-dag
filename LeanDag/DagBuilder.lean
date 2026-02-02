@@ -71,34 +71,34 @@ def CompleteProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
   -- Build nodes with computed relationships
   let nodes := stepsArray.mapIdx fun idx step =>
     let goalBefore := step.goalBefore.obligation
-    let goalsAfter := step.goalsAfter.map (·.obligation)
-    let hypsBefore := step.goalBefore.hypotheses.filter (·.name != "")
+    let goalsAfter := (step.goalsAfter.map (·.obligation)).toArray
+    let hypsBefore := (step.goalBefore.hypotheses.filter (·.name != "")).toArray
     -- Get hypotheses from first goal after tactic (if any), otherwise use before
     let hypsAfter := match step.goalsAfter.head? with
-      | some g => g.hypotheses.filter (·.name != "")
+      | some g => (g.hypotheses.filter (·.name != "")).toArray
       | none => hypsBefore
     -- Compute new hypotheses: indices in hypsAfter for hyps not in hypsBefore
-    let hypIdsBefore : Std.HashSet String := Std.HashSet.ofList (hypsBefore.map (·.id))
+    let hypIdsBefore : Std.HashSet String := Std.HashSet.ofArray (hypsBefore.map (·.id))
     let new_hypothesis_indices := Id.run do
-      let mut result : List Nat := []
-      for h : i in [:hypsAfter.length] do
+      let mut result : Array Nat := #[]
+      for h : i in [:hypsAfter.size] do
         let hyp := hypsAfter[i]!
         if !hypIdsBefore.contains hyp.id then
-          result := result ++ [i]
+          result := result.push i
       return result
     -- Build raw states (without diff)
-    let rawStateBefore : TacticProofState := { goals := [goalBefore], hypotheses := hypsBefore }
+    let rawStateBefore : TacticProofState := { goals := #[goalBefore], hypotheses := hypsBefore }
     let rawStateAfter : TacticProofState := { goals := goalsAfter, hypotheses := hypsAfter }
     -- Apply diff highlighting: proof_state_before shows what will change, proof_state_after shows what changed
     let proof_state_before := rawStateBefore.diffBefore rawStateAfter
     let proof_state_after := rawStateBefore.diffAfter rawStateAfter
     { id := idx
-      tactic := { text := step.tacticString, hypothesis_dependencies := step.hypothesis_dependencies, referenced_theorems := step.theorems.map (·.name) }
-      position := step.position.start
+      tactic := { text := step.tacticString, hypothesis_dependencies := step.hypothesis_dependencies.toArray, referenced_theorems := (step.theorems.map (·.name)).toArray }
+      position := step.position.start  -- Coerces to LineCharacterPosition
       proof_state_before
       proof_state_after
       new_hypothesis_indices
-      children := childrenOf[idx]?.getD []
+      children := (childrenOf[idx]?.getD []).toArray
       parent := parentOf[idx]?.join
       depth := depths[idx]?.getD 0 }
   -- Find all nodes with no parent (potential roots/orphans)
@@ -106,8 +106,8 @@ def CompleteProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
     if n.parent.isNone then some n.id else none
   -- First rootless node is the main root, rest are orphans (disconnected components)
   let (root, orphans) := match rootCandidates with
-    | [] => (none, [])
-    | r :: rest => (some r, rest)
+    | [] => (none, #[])
+    | r :: rest => (some r, rest.toArray)
   -- Find current node: the node whose position is closest to (but not after) cursor
   let current_node_id : Option Nat := Id.run do
     let mut best : Option Nat := none
@@ -122,6 +122,6 @@ def CompleteProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
           best := some node.id
           bestPos := pos
     return best
-  { nodes, root_node_id := root, orphans, current_node_id, initial_proof_state := nodes[0]!.proof_state_before, definition_name := definitionName }
+  { nodes, root_node_id := root, orphans, current_node_id, initial_proof_state := some nodes[0]!.proof_state_before, definition_name := definitionName }
 
 end LeanDag

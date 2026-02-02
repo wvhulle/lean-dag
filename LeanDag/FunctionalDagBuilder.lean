@@ -62,18 +62,18 @@ structure TermParserContext where
 /-- Determine the binding kind from LocalDecl. -/
 def bindingKindFromDecl (decl : LocalDecl) : BindingKind :=
   match decl.binderInfo with
-  | .default => if decl.value?.isSome then .let_bind else .fun_param
-  | .implicit | .strictImplicit => .fun_param
-  | .instImplicit => .fun_param
+  | .default => if decl.value?.isSome then .letBind else .funParam
+  | .implicit | .strictImplicit => .funParam
+  | .instImplicit => .funParam
 
 /-- Format a local declaration to LocalBinding. -/
 def formatBinding (ppCtx : PPContext) (decl : LocalDecl) (binderCache : BinderCache) (fileUri : String)
     : IO ParsedBinding := do
   let typeStr := (← ppExprWithInfos ppCtx decl.type).fmt.pretty
   let valueStr ← decl.value?.mapM fun v => do pure (← ppExprWithInfos ppCtx v).fmt.pretty
-  let navigation_locations : PreresolvedNavigationTargets := match binderCache.get? decl.fvarId with
-    | some pos => { definition := some { uri := fileUri, position := pos } }
-    | none => {}
+  let navigation_locations : Option PreresolvedNavigationTargets := match binderCache.get? decl.fvarId with
+    | some pos => some { definition := some { uri := fileUri, position := pos } }
+    | none => none
   let binding : LocalBinding := {
     name := decl.userName.toString.filterName
     type := .plain typeStr
@@ -151,11 +151,11 @@ def collectTermInfos (pctx : TermParserContext) (infoTree : InfoTree)
 /-! ## DAG Building -/
 
 /-- Compute which bindings are new compared to parent. -/
-def computeNewBindings (parentBindings childBindings : List ParsedBinding) : List Nat :=
+def computeNewBindings (parentBindings childBindings : List ParsedBinding) : Array Nat :=
   let withIndices : List (ParsedBinding × Nat) := childBindings.zipIdx
-  withIndices.filterMap fun (binding, idx) =>
+  (withIndices.filterMap fun (binding, idx) =>
     if parentBindings.any fun p => p.fvarId == binding.fvarId then none
-    else some idx
+    else some idx).toArray
 
 /-- Build CompleteFunctionalDag from parsed steps. -/
 def buildDag (steps : List ParsedTermStep) (position : Lsp.Position) (definitionName : Option String)
@@ -189,12 +189,12 @@ def buildDag (steps : List ParsedTermStep) (position : Lsp.Position) (definition
       let node : FunctionalDagNode := {
         id := idx
         expression := .plain step.expression
-        bindings_before := parentBindings.map (·.binding)
-        bindings_after := step.bindings.map (·.binding)
+        bindings_before := (parentBindings.map (·.binding)).toArray
+        bindings_after := (step.bindings.map (·.binding)).toArray
         new_binding_indices := newBindingIndices
         expected_type := step.expectedType.map AnnotatedTextTree.plain
         position := step.position
-        children := [] -- Will be filled in second pass
+        children := #[] -- Will be filled in second pass
         parent := parentId
         depth := parentStack.length
       }
@@ -207,7 +207,7 @@ def buildDag (steps : List ParsedTermStep) (position : Lsp.Position) (definition
       if let some pid := node.parent then
         if let some parent := nodesWithChildren[pid]? then
           nodesWithChildren := nodesWithChildren.set! pid
-            { parent with children := parent.children ++ [node.id] }
+            { parent with children := parent.children.push node.id }
 
     -- Find root and current node
     let rootNodeId := if nodesWithChildren.isEmpty then none else some 0
@@ -216,7 +216,7 @@ def buildDag (steps : List ParsedTermStep) (position : Lsp.Position) (definition
       if node.position.line <= position.line then some idx else none
 
     -- Get initial bindings from first node's bindings_before
-    let initialBindings := nodesWithChildren[0]?.map (·.bindings_before) |>.getD []
+    let initialBindings := nodesWithChildren[0]?.map (·.bindings_before) |>.getD #[]
 
     -- Get definition type from first step's expected type
     let definitionType := sortedSteps[0]?.bind (·.expectedType) |>.map AnnotatedTextTree.plain
@@ -228,7 +228,7 @@ def buildDag (steps : List ParsedTermStep) (position : Lsp.Position) (definition
       initial_bindings := initialBindings
       definition_name := definitionName
       definition_type := definitionType
-      orphans := []
+      orphans := #[]
     }
 
 /-! ## Main Entry Point -/

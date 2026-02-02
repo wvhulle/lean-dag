@@ -158,10 +158,10 @@ def rebroadcastProofDag : RequestM (RequestTask Unit) := do
   RequestM.withWaitFindSnapAtPos position fun snap => do
     if isTermModeTree snap.infoTree then
       let functionalDag ← computeFunctionalDag snap position
-      srv.broadcast (.functionalDag uri position functionalDag)
+      srv.broadcast (.functionalDag functionalDag position uri)
     else
       let proofDag ← computeProofDag snap position
-      srv.broadcast (.proofDag uri position proofDag)
+      srv.broadcast (.proofDag proofDag position uri)
 
 /-- Compute and broadcast proof DAG when hover request is received. -/
 def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask Unit) := do
@@ -178,7 +178,7 @@ def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask 
 
   -- Broadcast cursor position immediately
   let cursorInfo : EditorCursorPosition := { uri, position, method := "hover" }
-  srv.broadcast (.cursor cursorInfo)
+  srv.broadcast (.cursor cursorInfo.uri cursorInfo.position cursorInfo.method)
 
   -- Capture the server request emitter if not already captured
   if (← serverRequestEmitterRef.get).isNone then
@@ -193,10 +193,10 @@ def broadcastProofDagOnHover (params : Lsp.HoverParams) : RequestM (RequestTask 
   RequestM.withWaitFindSnapAtPos position fun snap => do
     if isTermModeTree snap.infoTree then
       let functionalDag ← computeFunctionalDag snap position
-      srv.broadcast (.functionalDag uri position functionalDag)
+      srv.broadcast (.functionalDag functionalDag position uri)
     else
       let proofDag ← computeProofDag snap position
-      srv.broadcast (.proofDag uri position proofDag)
+      srv.broadcast (.proofDag proofDag position uri)
 
 builtin_initialize
   Lean.Server.chainLspRequestHandler "textDocument/hover" Lsp.HoverParams (Option Lsp.Hover)

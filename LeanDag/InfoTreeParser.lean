@@ -234,12 +234,12 @@ def formatHypothesis (ppCtx : PPContext) (hypDecl : LocalDecl) (binderCache : Bi
     : IO LeanDag.ProofContextHypothesis := do
   let typeStr := (← ppExprWithInfos ppCtx hypDecl.type).fmt.pretty
   let valueStr ← hypDecl.value?.mapM fun v => do pure (← ppExprWithInfos ppCtx v).fmt.pretty
-  let navigation_locations : LeanDag.PreresolvedNavigationTargets := match binderCache.get? hypDecl.fvarId with
-    | some pos => { definition := some { uri := fileUri, position := pos } }
-    | none => {}
+  let navigation_locations : Option LeanDag.PreresolvedNavigationTargets := match binderCache.get? hypDecl.fvarId with
+    | some pos => some { definition := some { uri := fileUri, position := pos } }
+    | none => none
   return {
     name := hypDecl.userName.toString.filterName
-    type := .plain typeStr
+    type := LeanDag.AnnotatedTextTree.plain typeStr
     value := valueStr.map LeanDag.AnnotatedTextTree.plain
     id := hypDecl.fvarId.name.toString
     is_proof_term := hypDecl.type.isProp
@@ -259,10 +259,10 @@ def formatGoal (ctx : ContextInfo) (id : MVarId) (binderCache : BinderCache) (fi
     return hyp :: acc
   let typeStr := (← ppExprWithInfos ppCtx decl.type).fmt.pretty
   let obligation : LeanDag.ProofObligation := {
-    type := .plain typeStr
+    type := LeanDag.AnnotatedTextTree.plain typeStr
     username := decl.userName.toString.filterNameOpt
     id := id.name.toString
-    navigation_locations := {}
+    navigation_locations := none
   }
   return { obligation, hypotheses := hyps, mvarId := id }
 

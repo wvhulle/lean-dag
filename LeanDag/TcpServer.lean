@@ -10,8 +10,8 @@ namespace LeanDag
 
 /-! ## Navigate Handler -/
 
-/-- Type for navigate handler callback. -/
-abbrev NavigateHandler := String → Lsp.Position → IO Unit
+/-- Type for navigate handler callback. Uses LineCharacterPosition from generated types. -/
+abbrev NavigateHandler := String → LineCharacterPosition → IO Unit
 
 /-- Global reference to the navigate handler (set by LspServer). -/
 builtin_initialize navigateHandlerRef : IO.Ref (Option NavigateHandler) ← IO.mkRef none
@@ -32,7 +32,7 @@ structure ClientConnection where
 /-- Cached state for newly connecting clients. Stores typed data instead of full Messages. -/
 structure CachedState where
   cursor : Option EditorCursorPosition := none
-  proofDag : Option (String × Lsp.Position × Option CompleteProofDag) := none
+  proofDag : Option (String × LineCharacterPosition × Option CompleteProofDag) := none
 
 /-! ## TCP Server -/
 
@@ -81,8 +81,8 @@ def broadcast (srv : TcpServer) (msg : ServerToClientMessage) : IO Unit := do
   -- Cache typed data for newly connecting clients
   srv.cachedState.modify fun state =>
     match msg with
-    | .cursor info => { state with cursor := some info }
-    | .proofDag uri pos dag => { state with proofDag := some (uri, pos, dag) }
+    | .cursor uri pos method => { state with cursor := some ⟨method, pos, uri⟩ }
+    | .proofDag dag pos uri => { state with proofDag := some (uri, pos, dag) }
     | _ => state
   let clients ← srv.clients.get
   IO.eprintln s!"[TcpServer] Broadcasting to {clients.size} clients"
@@ -134,10 +134,10 @@ def handleClient (srv : TcpServer) (client : ClientConnection) : Async Unit := d
     let state ← srv.cachedState.get
     if let some info := state.cursor then
       IO.eprintln s!"[TcpServer] Sending cached cursor to client {client.id}"
-      let _ ← sendToClient client (.cursor info)
+      let _ ← sendToClient client (.cursor info.uri info.position info.method)
     if let some (uri, pos, dag) := state.proofDag then
       IO.eprintln s!"[TcpServer] Sending cached proof DAG to client {client.id}"
-      let _ ← sendToClient client (.proofDag uri pos dag)
+      let _ ← sendToClient client (.proofDag dag pos uri)
 
   -- Read loop for commands from client
   for _ in Lean.Loop.mk do
@@ -151,14 +151,14 @@ def handleClient (srv : TcpServer) (client : ClientConnection) : Async Unit := d
         match Lean.Json.parse line >>= ClientToServerCommand.fromJson? with
         | .ok cmd =>
           match cmd with
-          | .navigate uri pos =>
+          | .navigate pos uri =>
             IO.eprintln s!"[TcpServer] Received navigate command from client {client.id}: {uri}:{pos.line}:{pos.character}"
             -- Call the navigate handler if set
             if let some handler ← navigateHandlerRef.get then
               handler uri pos
             else
               IO.eprintln "[TcpServer] Navigate handler not set"
-          | .getProofDag uri pos mode =>
+          | .getProofDag mode pos uri =>
             IO.eprintln s!"[TcpServer] Received getProofDag command from client {client.id}: {uri}:{pos.line}:{pos.character} mode={mode}"
             -- Note: In library mode, this command cannot be directly handled here
             -- because we don't have access to the document context.

@@ -198,6 +198,16 @@ def snakeToCamel (s : String) : String := Id.run do
       else part.capitalize
     first ++ String.join capitalizedRest
 
+/-- Lowercase the first character of a string (for constructor names). -/
+def lowercaseFirst (s : String) : String :=
+  if s.isEmpty then s
+  else (s.take 1).toString.toLower ++ (s.drop 1).toString
+
+/-- Convert any casing to camelCase (handles snake_case and PascalCase). -/
+def toCamelCase (s : String) : String :=
+  if s.contains '_' then snakeToCamel s
+  else lowercaseFirst s
+
 /-- Resolve a $ref to a type name. -/
 def resolveRef (ref : String) : String :=
   -- "#/$defs/LineCharacterPosition" -> "LineCharacterPosition"
@@ -250,13 +260,14 @@ partial def schemaTypeToLean (schema : Json) : String := Id.run do
   | "object" => "Json"  -- Fallback for inline objects
   | _ => "Json"
 
-/-- Get the Lean type for a property, wrapping in Option if not required. -/
+/-- Get the Lean type for a property, wrapping in Option only if truly optional. -/
 def propertyToLeanType (prop : SchemaProperty) : String :=
   let baseType := schemaTypeToLean prop.schemaType
-  if prop.isRequired && !prop.hasDefault then
+  -- Use actual type if required OR has default; only Option for truly optional fields
+  if prop.isRequired || prop.hasDefault then
     baseType
   else
-    -- Add parentheses around complex types (those with spaces like "List X")
+    -- Add parentheses around complex types (those with spaces like "Array X")
     let parts := baseType.splitOn " "
     let needsParens := parts.length > 1
     if needsParens then
@@ -323,24 +334,24 @@ def topologicalSort (defs : List SchemaDefinition) : List SchemaDefinition := Id
 
 /-- Generate a structure field. -/
 def genStructField (prop : SchemaProperty) : String := Id.run do
-  let fieldName := prop.name  -- Keep snake_case to match JSON
+  let fieldName := prop.name  -- Keep snake_case to match JSON for deriving ToJson/FromJson
   let fieldType := propertyToLeanType prop
-  let isOptional := !prop.isRequired || prop.hasDefault
   let defaultPart :=
-    if prop.hasDefault && prop.isRequired then
-      -- Required field with default - use the default value directly
+    if prop.hasDefault then
+      -- Field with default - use the default value
       match prop.defaultValue with
       | some (.bool b) => s!" := {if b then "true" else "false"}"
       | some (.num n) =>
         if n.mantissa < 0 then s!" := {n.mantissa}"
         else s!" := {n.mantissa}"
       | some (.str strVal) => s!" := \"{strVal}\""
-      | some (.arr arr) => if arr.isEmpty then " := []" else ""
+      | some (.arr arr) => if arr.isEmpty then " := #[]" else ""
       | _ => ""
-    else if isOptional then
-      -- Optional field - default to none
+    else if !prop.isRequired then
+      -- Optional field without default - default to none (type is Option T)
       " := none"
     else
+      -- Required field without default - no default
       ""
   s!"  {fieldName} : {fieldType}{defaultPart}"
 
@@ -360,15 +371,15 @@ def genEnumString (def_ : SchemaDefinition) : String := Id.run do
     | some desc => s!"/-- {desc} -/\n"
     | none => ""
   let variants := def_.enumValues.map fun v =>
-    let leanName := snakeToCamel v
+    let leanName := toCamelCase v  -- Convert PascalCase/snake_case to camelCase
     s!"  | {leanName}"
   let variantsStr := String.intercalate "\n" variants
   let toJsonCases := def_.enumValues.map fun v =>
-    let leanName := snakeToCamel v
+    let leanName := toCamelCase v
     s!"    | .{leanName} => \"{v}\""
   let toJsonStr := String.intercalate "\n" toJsonCases
   let fromJsonCases := def_.enumValues.map fun v =>
-    let leanName := snakeToCamel v
+    let leanName := toCamelCase v
     s!"    | \"{v}\" => .ok {typeName}.{leanName}"
   let fromJsonStr := String.intercalate "\n" fromJsonCases
   s!"{docComment}inductive {typeName} where
@@ -403,7 +414,7 @@ def genTaggedUnionString (def_ : SchemaDefinition) : String := Id.run do
       typeReferencesName (propertyToLeanType p) typeName
   -- Generate inductive variants
   let variants := def_.variants.map fun v =>
-    let variantName := snakeToCamel v.discriminatorValue
+    let variantName := toCamelCase v.discriminatorValue
     let params := v.properties.map fun p =>
       let pType := propertyToLeanType p
       s!"({p.name} : {pType})"
@@ -416,7 +427,7 @@ def genTaggedUnionString (def_ : SchemaDefinition) : String := Id.run do
   -- Generate toJson implementation
   -- Use prefixed parameter names to avoid conflicts with constructor names
   let toJsonCases := def_.variants.map fun v =>
-    let variantName := snakeToCamel v.discriminatorValue
+    let variantName := toCamelCase v.discriminatorValue
     let paramNames := v.properties.map fun p => s!"p_{p.name}"
     let paramsPattern := String.intercalate " " paramNames
     let fieldsList := v.properties.map fun p =>
@@ -439,7 +450,7 @@ def genTaggedUnionString (def_ : SchemaDefinition) : String := Id.run do
   let toJsonStr := String.intercalate "\n" toJsonCases
   -- Generate fromJson implementation with explicit type annotation
   let fromJsonCases := def_.variants.map fun v =>
-    let variantName := snakeToCamel v.discriminatorValue
+    let variantName := toCamelCase v.discriminatorValue
     let bindings := v.properties.map fun p =>
       let pType := propertyToLeanType p
       let baseType := schemaTypeToLean p.schemaType

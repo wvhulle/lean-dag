@@ -14,7 +14,7 @@ def testEmptyProofDag : IO Unit := do
   let dag : CompleteProofDag := {}
 
   assertEqual "no nodes" dag.nodes.size 0
-  assertTrue "no root" dag.root.isNone
+  assertTrue "no root" dag.root_node_id.isNone
   assertEqual "no orphans" dag.orphans.length 0
 
 /-- Test: Single tactic proof has one node as both root and leaf. -/
@@ -38,7 +38,7 @@ def testSingleTacticProof : IO Unit := do
   }
 
   assertEqual "one node" dag.nodes.size 1
-  assertEqual "root is 0" dag.root (some 0)
+  assertEqual "root is 0" dag.root_node_id (some 0)
   assertTrue "node is leaf (no children)" dag.nodes[0]!.children.isEmpty
   assertTrue "goal is solved" dag.nodes[0]!.proof_state_after.goals.isEmpty
 

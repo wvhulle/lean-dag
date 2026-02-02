@@ -275,6 +275,7 @@
       "properties": {
         "id": {
           "type": "integer",
+          "minimum": 0,
           "description": "Unique identifier for this node within the proof DAG. Used for parent/child references and for identifying the current selection."
         },
         "tactic": {
@@ -295,22 +296,24 @@
         },
         "new_hypothesis_indices": {
           "type": "array",
-          "items": { "type": "integer" },
+          "items": { "type": "integer", "minimum": 0 },
           "default": [],
           "description": "Indices into proof_state_after.hypotheses identifying which hypotheses were introduced by this tactic. Used to highlight newly introduced hypotheses in the TUI."
         },
         "children": {
           "type": "array",
-          "items": { "type": "integer" },
+          "items": { "type": "integer", "minimum": 0 },
           "default": [],
           "description": "Node IDs of tactics that follow this one in the proof tree. Multiple children occur when a tactic spawns multiple subgoals (e.g., 'constructor', 'cases')."
         },
         "parent": {
           "type": "integer",
+          "minimum": 0,
           "description": "Node ID of the parent tactic in the proof tree. Null for the root node. Used for tree navigation and computing depth."
         },
         "depth": {
           "type": "integer",
+          "minimum": 0,
           "default": 0,
           "description": "The depth of this node in the proof tree, where the root has depth 0. Used for indentation and visual tree layout."
         },
@@ -336,10 +339,12 @@
         },
         "root_node_id": {
           "type": "integer",
+          "minimum": 0,
           "description": "The node ID of the root tactic (first tactic in the proof). Null if the proof has no tactics (e.g., 'by rfl' or term-mode proofs)."
         },
         "current_node_id": {
           "type": "integer",
+          "minimum": 0,
           "description": "The node ID of the currently selected/focused node, typically the one closest to the cursor position. Used to highlight the active tactic in the TUI."
         },
         "initial_proof_state": {
@@ -352,7 +357,7 @@
         },
         "orphans": {
           "type": "array",
-          "items": { "type": "integer" },
+          "items": { "type": "integer", "minimum": 0 },
           "default": [],
           "description": "Node IDs of tactics that don't have a parent in the tree structure. These may represent disconnected proof fragments or parsing edge cases."
         }
@@ -420,6 +425,7 @@
       "properties": {
         "id": {
           "type": "integer",
+          "minimum": 0,
           "description": "Unique identifier for this node within the functional DAG."
         },
         "expression": {
@@ -440,7 +446,7 @@
         },
         "new_binding_indices": {
           "type": "array",
-          "items": { "type": "integer" },
+          "items": { "type": "integer", "minimum": 0 },
           "default": [],
           "description": "Indices into bindings_after identifying which bindings were introduced by this expression."
         },
@@ -454,16 +460,18 @@
         },
         "children": {
           "type": "array",
-          "items": { "type": "integer" },
+          "items": { "type": "integer", "minimum": 0 },
           "default": [],
           "description": "Node IDs of child expressions (e.g., pattern match branches, if-else branches)."
         },
         "parent": {
           "type": "integer",
+          "minimum": 0,
           "description": "Node ID of the parent expression. Null for the root node."
         },
         "depth": {
           "type": "integer",
+          "minimum": 0,
           "default": 0,
           "description": "The depth of this node in the expression tree."
         }
@@ -484,10 +492,12 @@
         },
         "root_node_id": {
           "type": "integer",
+          "minimum": 0,
           "description": "The node ID of the root expression (first step in the definition)."
         },
         "current_node_id": {
           "type": "integer",
+          "minimum": 0,
           "description": "The node ID closest to the cursor position."
         },
         "initial_bindings": {
@@ -506,7 +516,7 @@
         },
         "orphans": {
           "type": "array",
-          "items": { "type": "integer" },
+          "items": { "type": "integer", "minimum": 0 },
           "default": [],
           "description": "Node IDs of expressions that don't have a parent in the tree structure."
         }
@@ -587,7 +597,7 @@
               "$ref": "#/$defs/LineCharacterPosition",
               "description": "The cursor position that triggered this proof DAG extraction."
             },
-            "proof_dag": {
+            "dag": {
               "$ref": "#/$defs/CompleteProofDag",
               "description": "The extracted proof DAG, or null if no proof was found at the cursor position."
             }
@@ -609,7 +619,7 @@
               "$ref": "#/$defs/LineCharacterPosition",
               "description": "The cursor position that triggered this functional DAG extraction."
             },
-            "functional_dag": {
+            "dag": {
               "$ref": "#/$defs/CompleteFunctionalDag",
               "description": "The extracted functional DAG, or null if no term-mode definition was found at the cursor position."
             }

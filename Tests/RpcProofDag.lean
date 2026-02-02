@@ -46,7 +46,7 @@ unsafe def testLinearProofStructure : IO Unit := do
 
     -- Verify basic structure
     assertTrue "has nodes" (!dag.nodes.isEmpty)
-    assertSome "has root" dag.root
+    assertSome "has root" dag.root_node_id
     assertSome "has current_node_id" dag.current_node_id
 
     -- Verify initial state has the theorem goal
@@ -102,7 +102,7 @@ unsafe def testBranchingProofStructure : IO Unit := do
     let dag ← getProofDagAt uri sessionId 23 7 3
 
     assertTrue "has nodes" (!dag.nodes.isEmpty)
-    assertSome "has root" dag.root
+    assertSome "has root" dag.root_node_id
 
     -- Verify all nodes have valid structure
     for node in dag.nodes do

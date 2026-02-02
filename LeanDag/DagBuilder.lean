@@ -29,7 +29,7 @@ def getDefinitionName (tree : InfoTree) : Option String :=
 
 def CompleteProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
     (definitionName : Option String := none) : CompleteProofDag :=
-  if steps.isEmpty then {} else
+  if steps.isEmpty then { initialProofState := {} } else
   let stepsArray := steps.toArray
   -- Build goal ID to step index map: which step produces which goals
   -- goalsAfter are the goals that result from applying the tactic
@@ -122,6 +122,6 @@ def CompleteProofDag.build (steps : List ParsedStep) (cursorPos : Lsp.Position)
           best := some node.id
           bestPos := pos
     return best
-  { nodes, rootNodeId := root, orphans, currentNodeId, initialProofState := some nodes[0]!.proofStateBefore, definitionName := definitionName }
+  { nodes, rootNodeId := root, orphans, currentNodeId, initialProofState := nodes[0]!.proofStateBefore, definitionName := definitionName }
 
 end LeanDag

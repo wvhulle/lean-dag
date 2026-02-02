@@ -46,12 +46,12 @@ unsafe def testLinearProofStructure : IO Unit := do
 
     -- Verify basic structure
     assertTrue "has nodes" (!dag.nodes.isEmpty)
-    assertSome "has root" dag.root_node_id
-    assertSome "has current_node_id" dag.current_node_id
+    assertSome "has root" dag.rootNodeId
+    assertSome "has currentNodeId" dag.currentNodeId
 
     -- Verify initial state has the theorem goal
-    assertTrue "initial_proof_state has goal" (!dag.initial_proof_state.goals.isEmpty)
-    let initialGoal := dag.initial_proof_state.goals[0]!
+    assertTrue "initialProofState has goal" (!dag.initialProofState.goals.isEmpty)
+    let initialGoal := dag.initialProofState.goals[0]!
     assertTrue "initial goal has type" (!initialGoal.type.isEmpty)
     assertTrue "initial goal has id" (!initialGoal.id.isEmpty)
 
@@ -60,18 +60,18 @@ unsafe def testLinearProofStructure : IO Unit := do
       assertTrue s!"node {node.id} has tactic text" (!node.tactic.text.isEmpty)
       assertTrue s!"node {node.id} has position" (node.position.line ≥ 0)
 
-      -- proof_state_before and proof_state_after must exist
+      -- proofStateBefore and proofStateAfter must exist
       -- Goals in states must have required fields
-      for goal in node.proof_state_before.goals do
-        assertTrue s!"node {node.id} proof_state_before goal has type" (!goal.type.isEmpty)
-        assertTrue s!"node {node.id} proof_state_before goal has id" (!goal.id.isEmpty)
+      for goal in node.proofStateBefore.goals do
+        assertTrue s!"node {node.id} proofStateBefore goal has type" (!goal.type.isEmpty)
+        assertTrue s!"node {node.id} proofStateBefore goal has id" (!goal.id.isEmpty)
 
-      for goal in node.proof_state_after.goals do
-        assertTrue s!"node {node.id} proof_state_after goal has type" (!goal.type.isEmpty)
-        assertTrue s!"node {node.id} proof_state_after goal has id" (!goal.id.isEmpty)
+      for goal in node.proofStateAfter.goals do
+        assertTrue s!"node {node.id} proofStateAfter goal has type" (!goal.type.isEmpty)
+        assertTrue s!"node {node.id} proofStateAfter goal has id" (!goal.id.isEmpty)
 
       -- Hypotheses must have required fields
-      for hyp in node.proof_state_before.hypotheses do
+      for hyp in node.proofStateBefore.hypotheses do
         assertTrue s!"node {node.id} hyp has name" (!hyp.name.isEmpty)
         assertTrue s!"node {node.id} hyp has type" (!hyp.type.isEmpty)
         assertTrue s!"node {node.id} hyp has id" (!hyp.id.isEmpty)
@@ -102,7 +102,7 @@ unsafe def testBranchingProofStructure : IO Unit := do
     let dag ← getProofDagAt uri sessionId 23 7 3
 
     assertTrue "has nodes" (!dag.nodes.isEmpty)
-    assertSome "has root" dag.root_node_id
+    assertSome "has root" dag.rootNodeId
 
     -- Verify all nodes have valid structure
     for node in dag.nodes do
@@ -143,7 +143,7 @@ unsafe def testInductionProofStructure : IO Unit := do
 
     -- Verify goal types are non-empty strings (not hygienic names)
     for node in dag.nodes do
-      for goal in node.proof_state_after.goals do
+      for goal in node.proofStateAfter.goals do
         -- username should be None or a visible name (filtered)
         if let some name := goal.username then
           assertTrue s!"goal username is visible" (!name.isEmpty && !containsSubstring name "._hyg.")
@@ -173,22 +173,22 @@ unsafe def testNavigationLocationsField : IO Unit := do
     -- Logic.lean line 4: "  intro hnq hp" (1-indexed)
     let dag ← getProofDagAt uri sessionId 4 5 3
 
-    -- Verify navigation_locations field exists in goals (even if empty)
-    for goal in dag.initial_proof_state.goals do
+    -- Verify navigationLocations field exists in goals (even if empty)
+    for goal in dag.initialProofState.goals do
       -- The field should exist (default value is empty)
       -- We just verify the structure is valid by accessing it
-      let _ := goal.navigation_locations
-      IO.println s!"  ✓ initial_proof_state goal has navigation_locations field"
+      let _ := goal.navigationLocations
+      IO.println s!"  ✓ initialProofState goal has navigationLocations field"
 
     for node in dag.nodes do
-      for goal in node.proof_state_after.goals do
-        let _ := goal.navigation_locations
-      for hyp in node.proof_state_after.hypotheses do
-        let _ := hyp.navigation_locations
+      for goal in node.proofStateAfter.goals do
+        let _ := goal.navigationLocations
+      for hyp in node.proofStateAfter.hypotheses do
+        let _ := hyp.navigationLocations
 
     shutdown 4
     let _ ← waitForExit
-    IO.println "  ✓ navigation_locations fields present"
+    IO.println "  ✓ navigationLocations fields present"
 
 unsafe def testUsernameFiltering : IO Unit := do
   printSubsection "Username Filtering"
@@ -214,7 +214,7 @@ unsafe def testUsernameFiltering : IO Unit := do
     let dag ← getProofDagAt uri sessionId 1 11 3
 
     -- Verify anonymous usernames are filtered to None
-    for goal in dag.initial_proof_state.goals do
+    for goal in dag.initialProofState.goals do
       if let some name := goal.username then
         assertTrue "username not [anonymous]" (name != "[anonymous]")
         assertTrue "username not hygienic" (!containsSubstring name "._hyg." && !containsSubstring name "._@.")
@@ -245,14 +245,14 @@ unsafe def testNewHypothesesIndices : IO Unit := do
     let dag ← getProofDagAt uri sessionId 4 5 3
 
     for node in dag.nodes do
-      -- new_hypothesis_indices indices must be valid
-      for idx in node.new_hypothesis_indices do
+      -- newHypothesisIndices indices must be valid
+      for idx in node.newHypothesisIndices do
         assertTrue s!"node {node.id} newHyp idx {idx} valid"
-          (idx < node.proof_state_after.hypotheses.length)
+          (idx < node.proofStateAfter.hypotheses.size)
 
     shutdown 4
     let _ ← waitForExit
-    IO.println "  ✓ new_hypothesis_indices indices valid"
+    IO.println "  ✓ newHypothesisIndices indices valid"
 
 unsafe def testTacticInfoFields : IO Unit := do
   printSubsection "Tactic Info Fields"
@@ -279,11 +279,11 @@ unsafe def testTacticInfoFields : IO Unit := do
       -- tactic.text must be non-empty
       assertTrue s!"node {node.id} tactic text non-empty" (!node.tactic.text.isEmpty)
 
-      -- hypothesis_dependencies should be a list (can be empty)
-      let _ := node.tactic.hypothesis_dependencies
+      -- hypothesisDependencies should be a list (can be empty)
+      let _ := node.tactic.hypothesisDependencies
 
-      -- referenced_theorems should be a list (can be empty)
-      let _ := node.tactic.referenced_theorems
+      -- referencedTheorems should be a list (can be empty)
+      let _ := node.tactic.referencedTheorems
 
     shutdown 4
     let _ ← waitForExit

@@ -39,7 +39,7 @@ unsafe def testUnicodeIdentifiers : IO Unit := do
       assertTrue "unicode proof has nodes" (!d.nodes.isEmpty)
       -- Verify hypotheses with unicode names are handled
       for node in d.nodes do
-        for hyp in node.proof_state_after.hypotheses do
+        for hyp in node.proofStateAfter.hypotheses do
           assertTrue s!"hyp {hyp.name} has type" (!hyp.type.isEmpty)
       IO.println s!"  ✓ unicode proof returned {d.nodes.size} nodes"
     | none =>
@@ -112,7 +112,7 @@ unsafe def testSubscriptCharacters : IO Unit := do
       assertTrue "subscript proof has nodes" (!d.nodes.isEmpty)
       -- Check that subscript variable names are preserved
       for node in d.nodes do
-        for hyp in node.proof_state_after.hypotheses do
+        for hyp in node.proofStateAfter.hypotheses do
           -- x₁ and x₂ should appear in hypothesis names or types
           IO.println s!"    hyp: {hyp.name} : {hyp.type}"
       IO.println s!"  ✓ subscript proof returned {d.nodes.size} nodes"

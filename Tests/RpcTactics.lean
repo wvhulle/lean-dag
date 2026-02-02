@@ -224,7 +224,7 @@ unsafe def testConstructorProof : IO Unit := do
         IO.println s!"  ✓ constructor returned {d.nodes.size} nodes (linear)"
       -- Check for orphans (disconnected components)
       if !d.orphans.isEmpty then
-        IO.println s!"  ✓ has {d.orphans.length} orphan(s) (disconnected components)"
+        IO.println s!"  ✓ has {d.orphans.size} orphan(s) (disconnected components)"
     | none =>
       IO.println "  ✗ constructor proof should return a DAG"
 

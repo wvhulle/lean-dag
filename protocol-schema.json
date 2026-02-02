@@ -419,6 +419,9 @@
           "description": "Node IDs of tactics that don't have a parent in the tree structure. These may represent disconnected proof fragments or parsing edge cases."
         }
       },
+      "required": [
+        "initial_proof_state"
+      ],
       "additionalProperties": false
     },
     "BindingKind": {

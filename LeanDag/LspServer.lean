@@ -166,7 +166,7 @@ def getProofDag (params : GetProofDagParams) : RequestM (RequestTask GetProofDag
   RequestM.withWaitFindSnapAtPos params.position fun snap => do
     match ← computeProofDag snap params.position with
     | some proofDag => return { proofDag }
-    | none => return { proofDag := {} }
+    | none => return { proofDag := { initialProofState := {} } }
 
 /-! ## Standalone Binary Support -/
 

@@ -185,6 +185,95 @@ instance : BEq ProofDagTacticNode where
 instance : BEq CompleteProofDag where
   beq a b := a.nodes.toList == b.nodes.toList && a.root_node_id == b.root_node_id && a.orphans == b.orphans
 
+/-! ## Functional DAG Types (for term-mode code) -/
+
+/-- The kind of binding in term-mode code. -/
+inductive BindingKind where
+  | let_bind    -- let-binding
+  | fun_param   -- function parameter
+  | match_var   -- pattern match variable
+  | for_var     -- for-loop variable
+  deriving Inhabited, BEq, Repr
+
+instance : ToJson BindingKind where
+  toJson
+    | .let_bind => "let_bind"
+    | .fun_param => "fun_param"
+    | .match_var => "match_var"
+    | .for_var => "for_var"
+
+instance : FromJson BindingKind where
+  fromJson? j := do
+    let s ← j.getStr?
+    match s with
+    | "let_bind" => pure .let_bind
+    | "fun_param" => pure .fun_param
+    | "match_var" => pure .match_var
+    | "for_var" => pure .for_var
+    | _ => throw s!"invalid BindingKind: {s}"
+
+/-- Information about a local binding in term-mode code. Analogous to ProofContextHypothesis. -/
+structure LocalBinding where
+  /-- User-visible name. -/
+  name : String
+  /-- Type expression (with diff highlighting). -/
+  type : AnnotatedTextTree
+  /-- Value for let-bindings (with diff highlighting). -/
+  value : Option AnnotatedTextTree := none
+  /-- Internal ID for tracking. -/
+  id : String
+  /-- The kind of binding. -/
+  binding_kind : BindingKind
+  /-- Whether this binding is implicit. -/
+  is_implicit : Bool := false
+  /-- Whether this is a typeclass instance. -/
+  is_instance : Bool := false
+  /-- Whether this binding goes out of scope (for diff display). -/
+  is_removed : Bool := false
+  /-- Pre-resolved navigation locations. -/
+  navigation_locations : PreresolvedNavigationTargets := {}
+  deriving Inhabited, ToJson, FromJson, BEq, Repr
+
+/-- Single node in the functional DAG. -/
+structure FunctionalDagNode where
+  id : Nat
+  /-- Expression at this step. -/
+  expression : AnnotatedTextTree
+  /-- Bindings in scope before this expression. -/
+  bindings_before : List LocalBinding := []
+  /-- Bindings in scope after this expression. -/
+  bindings_after : List LocalBinding := []
+  /-- Indices into bindings_after for new bindings. -/
+  new_binding_indices : List Nat := []
+  /-- Expected type at this point (continuation type). -/
+  expected_type : Option AnnotatedTextTree := none
+  /-- Position in source file. -/
+  position : Lsp.Position
+  /-- Child node IDs (for pattern match branches, if-else, etc.). -/
+  children : List Nat := []
+  /-- Parent node ID. -/
+  parent : Option Nat := none
+  /-- Depth in tree. -/
+  depth : Nat := 0
+  deriving Inhabited, ToJson, FromJson, Repr
+
+instance : BEq FunctionalDagNode where
+  beq a b := a.id == b.id
+
+/-- Complete functional DAG structure for term-mode definitions. -/
+structure CompleteFunctionalDag where
+  nodes : Array FunctionalDagNode := #[]
+  root_node_id : Option Nat := none
+  current_node_id : Option Nat := none
+  initial_bindings : List LocalBinding := []
+  definition_name : Option String := none
+  definition_type : Option AnnotatedTextTree := none
+  orphans : List Nat := []
+  deriving Inhabited, ToJson, FromJson, Repr
+
+instance : BEq CompleteFunctionalDag where
+  beq a b := a.nodes.toList == b.nodes.toList && a.root_node_id == b.root_node_id && a.orphans == b.orphans
+
 /-! ## Server Mode -/
 
 /-- Server operating mode for RPC communication. -/
@@ -222,6 +311,7 @@ inductive ServerToClientMessage where
   | connected (server_mode : Option ServerOperatingMode)
   | cursor (info : EditorCursorPosition)
   | proofDag (uri : String) (position : Lsp.Position) (proof_dag : Option CompleteProofDag)
+  | functionalDag (uri : String) (position : Lsp.Position) (functional_dag : Option CompleteFunctionalDag)
   | error (error : String)
   deriving Inhabited, Repr
 
@@ -233,6 +323,8 @@ def ServerToClientMessage.toJson : ServerToClientMessage → Json
     Json.mkObj [("type", "Cursor"), ("uri", info.uri), ("position", Lean.toJson info.position), ("method", info.method)]
   | .proofDag uri pos dag =>
     Json.mkObj [("type", "ProofDag"), ("uri", uri), ("position", Lean.toJson pos), ("proof_dag", Lean.toJson dag)]
+  | .functionalDag uri pos dag =>
+    Json.mkObj [("type", "FunctionalDag"), ("uri", uri), ("position", Lean.toJson pos), ("functional_dag", Lean.toJson dag)]
   | .error err =>
     Json.mkObj [("type", "Error"), ("error", err)]
 
@@ -255,6 +347,11 @@ def ServerToClientMessage.fromJson? (j : Json) : Except String ServerToClientMes
     let position ← j.getObjValAs? Lsp.Position "position"
     let proof_dag ← j.getObjValAs? (Option CompleteProofDag) "proof_dag"
     return .proofDag uri position proof_dag
+  | "FunctionalDag" =>
+    let uri ← j.getObjValAs? String "uri"
+    let position ← j.getObjValAs? Lsp.Position "position"
+    let functional_dag ← j.getObjValAs? (Option CompleteFunctionalDag) "functional_dag"
+    return .functionalDag uri position functional_dag
   | "Error" =>
     let error ← j.getObjValAs? String "error"
     return .error error

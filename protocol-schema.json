@@ -360,6 +360,160 @@
       "additionalProperties": false
     },
 
+    "BindingKind": {
+      "type": "string",
+      "enum": ["let_bind", "fun_param", "match_var", "for_var"],
+      "description": "The kind of binding in term-mode code. 'let_bind' is a let-binding, 'fun_param' is a function parameter, 'match_var' is a pattern match variable, 'for_var' is a for-loop variable."
+    },
+
+    "LocalBinding": {
+      "type": "object",
+      "description": "Information about a local binding (variable) in term-mode code. Analogous to ProofContextHypothesis but for functional programming context.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The user-visible name of the binding as it appears in the code."
+        },
+        "type": {
+          "$ref": "#/$defs/AnnotatedTextTree",
+          "description": "The type of the binding as an annotated text tree with diff highlighting."
+        },
+        "value": {
+          "$ref": "#/$defs/AnnotatedTextTree",
+          "description": "For let-bindings with explicit values, the bound expression. Null for function parameters or pattern match variables."
+        },
+        "id": {
+          "type": "string",
+          "description": "A unique internal identifier for tracking this binding across expression nodes."
+        },
+        "binding_kind": {
+          "$ref": "#/$defs/BindingKind",
+          "description": "The kind of binding (let, function parameter, match variable, etc.)."
+        },
+        "is_implicit": {
+          "type": "boolean",
+          "default": false,
+          "description": "True if this binding is implicit (e.g., {α : Type})."
+        },
+        "is_instance": {
+          "type": "boolean",
+          "default": false,
+          "description": "True if this binding is a typeclass instance (e.g., [Monad m])."
+        },
+        "is_removed": {
+          "type": "boolean",
+          "default": false,
+          "description": "True if this binding goes out of scope. Used for diff display."
+        },
+        "navigation_locations": {
+          "$ref": "#/$defs/PreresolvedNavigationTargets",
+          "description": "Pre-resolved go-to-definition and go-to-type-definition locations for this binding."
+        }
+      },
+      "required": ["name", "type", "id", "binding_kind"],
+      "additionalProperties": false
+    },
+
+    "FunctionalDagNode": {
+      "type": "object",
+      "description": "A node in the functional DAG representing a term-mode expression step. Analogous to ProofDagTacticNode but for functional code showing data flow.",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Unique identifier for this node within the functional DAG."
+        },
+        "expression": {
+          "$ref": "#/$defs/AnnotatedTextTree",
+          "description": "The expression at this step (e.g., 'divide a b' or 'safeSqrt quotient')."
+        },
+        "bindings_before": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/LocalBinding" },
+          "default": [],
+          "description": "Variables in scope before this expression is evaluated."
+        },
+        "bindings_after": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/LocalBinding" },
+          "default": [],
+          "description": "Variables in scope after this expression is evaluated (includes new bindings)."
+        },
+        "new_binding_indices": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "default": [],
+          "description": "Indices into bindings_after identifying which bindings were introduced by this expression."
+        },
+        "expected_type": {
+          "$ref": "#/$defs/AnnotatedTextTree",
+          "description": "The expected type at this point in the expression (the continuation type)."
+        },
+        "position": {
+          "$ref": "#/$defs/LineCharacterPosition",
+          "description": "The source position where this expression appears in the Lean file."
+        },
+        "children": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "default": [],
+          "description": "Node IDs of child expressions (e.g., pattern match branches, if-else branches)."
+        },
+        "parent": {
+          "type": "integer",
+          "description": "Node ID of the parent expression. Null for the root node."
+        },
+        "depth": {
+          "type": "integer",
+          "default": 0,
+          "description": "The depth of this node in the expression tree."
+        }
+      },
+      "required": ["id", "expression", "position"],
+      "additionalProperties": false
+    },
+
+    "CompleteFunctionalDag": {
+      "type": "object",
+      "description": "The complete functional DAG for a term-mode definition. Shows data flow through let-bindings, function calls, and pattern matches. Analogous to CompleteProofDag.",
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FunctionalDagNode" },
+          "default": [],
+          "description": "All nodes in the functional DAG ordered by source position."
+        },
+        "root_node_id": {
+          "type": "integer",
+          "description": "The node ID of the root expression (first step in the definition)."
+        },
+        "current_node_id": {
+          "type": "integer",
+          "description": "The node ID closest to the cursor position."
+        },
+        "initial_bindings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/LocalBinding" },
+          "default": [],
+          "description": "The function parameters available at the start of the definition."
+        },
+        "definition_name": {
+          "type": "string",
+          "description": "The fully qualified name of the function being defined."
+        },
+        "definition_type": {
+          "$ref": "#/$defs/AnnotatedTextTree",
+          "description": "The full function signature/type."
+        },
+        "orphans": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "default": [],
+          "description": "Node IDs of expressions that don't have a parent in the tree structure."
+        }
+      },
+      "additionalProperties": false
+    },
+
     "EditorCursorPosition": {
       "type": "object",
       "description": "Information about the current cursor position in the editor. Sent from the editor to lean-dag to request proof information at that location.",
@@ -436,6 +590,28 @@
             "proof_dag": {
               "$ref": "#/$defs/CompleteProofDag",
               "description": "The extracted proof DAG, or null if no proof was found at the cursor position."
+            }
+          },
+          "required": ["type", "uri", "position"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "Sent when a functional DAG is available at the current cursor position in term-mode code. Contains the dataflow structure for rendering in the TUI.",
+          "properties": {
+            "type": { "const": "FunctionalDag" },
+            "uri": {
+              "type": "string",
+              "format": "uri",
+              "description": "The URI of the document containing the definition."
+            },
+            "position": {
+              "$ref": "#/$defs/LineCharacterPosition",
+              "description": "The cursor position that triggered this functional DAG extraction."
+            },
+            "functional_dag": {
+              "$ref": "#/$defs/CompleteFunctionalDag",
+              "description": "The extracted functional DAG, or null if no term-mode definition was found at the cursor position."
             }
           },
           "required": ["type", "uri", "position"],

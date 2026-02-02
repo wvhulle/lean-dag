@@ -2,6 +2,14 @@ import Lake
 open Lake DSL
 
 package «lean-dag» where
+  testDriver := "«lean-dag-tests»"
+
+/-- Target that ensures lean-dag binary is built -/
+target «lean-dag-bin» pkg : System.FilePath := do
+  if let some exe := pkg.findLeanExe? `«lean-dag» then
+    exe.exe.fetch
+  else
+    error "Could not find lean-dag executable"
 
 /-- Track protocol-schema.json as a dependency for code generation -/
 target «protocol-schema» pkg : System.FilePath := do
@@ -20,17 +28,7 @@ lean_exe «lean-dag» where
   root := `Main
   supportInterpreter := true
 
-
 lean_exe «lean-dag-tests» where
   root := `Tests.Main
   supportInterpreter := true
-
-/-- Run tests after building the lean-dag binary (required for RPC integration tests) -/
-@[test_driver]
-script test do
-  -- Build the lean-dag binary first (required by RPC integration tests at runtime)
-  let buildResult ← IO.Process.run { cmd := "lake", args := #["build", "lean-dag"] }
-  if !buildResult.isEmpty then IO.println buildResult
-  -- Then run the test executable
-  let exitCode ← IO.Process.spawn { cmd := ".lake/build/bin/lean-dag-tests" } >>= (·.wait)
-  return exitCode
+  extraDepTargets := #[`«lean-dag-bin»]

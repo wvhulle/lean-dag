@@ -2,12 +2,15 @@ import Lake
 open Lake DSL
 
 package «lean-dag» where
-  license := "MIT"
 
-require mathlib from git "https://github.com/leanprover-community/mathlib4" @ "v4.26.0-rc2"
+/-- Track protocol-schema.json as a dependency for code generation -/
+target «protocol-schema» pkg : System.FilePath := do
+  let path := pkg.dir / "protocol-schema.json"
+  inputTextFile path
 
 lean_lib «LeanDag» where
   precompileModules := true
+  extraDepTargets := #[`«protocol-schema»]
 
 lean_lib «Tests» where
   globs := #[.submodules `Tests]
@@ -16,6 +19,7 @@ lean_lib «Tests» where
 lean_exe «lean-dag» where
   root := `Main
   supportInterpreter := true
+
 
 lean_exe «lean-dag-tests» where
   root := `Tests.Main

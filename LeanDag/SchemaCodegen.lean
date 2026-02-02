@@ -5,18 +5,6 @@ open Lean Elab Command Meta Parser Term
 
 namespace LeanDag.SchemaCodegen
 
-/-! # JSON Schema to Lean Type Code Generation
-
-This module provides a custom command elaborator `gen_types_from_schema` that reads
-a JSON schema file and generates Lean 4 types with ToJson/FromJson instances.
-
-## Property Order
-
-JSON objects in Lean.Json are stored as sorted RBNodes, losing insertion order.
-To preserve property order for constructor parameters, we use the `"x-property-order"`
-extension field in the schema. If not present, properties are sorted alphabetically.
--/
-
 /-! ## Schema Representation -/
 
 structure SchemaProperty where
@@ -61,30 +49,70 @@ def toCamelCase (s : String) : String :=
 def resolveRef (ref : String) : String :=
   ref.splitOn "/" |>.getLast!
 
-/-! ## Type Mapping -/
+/-! ## Type Shape ADT -/
 
-partial def schemaTypeToLean (schema : Json) : String :=
-  if let some ref := schema.getObjValAs? String "$ref" |>.toOption then
-    resolveRef ref
+/-- Captures the structure of a type from JSON Schema, eliminating dual string/syntax mapping. -/
+inductive TypeShape where
+  | primitive : String → TypeShape  -- "String", "Nat", "Int", "Bool", "Json"
+  | array : TypeShape → TypeShape
+  | option : TypeShape → TypeShape
+  | ref : String → TypeShape        -- Reference to another type
+  deriving Inhabited, BEq, Repr
+
+/-- Parse a JSON schema into a TypeShape. -/
+partial def parseTypeShape (schema : Json) : TypeShape :=
+  if let some r := schema.getObjValAs? String "$ref" |>.toOption then
+    .ref (resolveRef r)
   else if schema.getObjVal? "const" |>.isOk then
-    "String"
+    .primitive "String"
   else
     match schema.getObjValAs? String "type" |>.toOption.getD "any" with
-    | "string" => "String"
+    | "string" => .primitive "String"
     | "integer" =>
       let min := schema.getObjValAs? Int "minimum" |>.toOption
-      if min == some 0 then "Nat" else "Int"
-    | "boolean" => "Bool"
+      if min == some 0 then .primitive "Nat" else .primitive "Int"
+    | "boolean" => .primitive "Bool"
     | "array" =>
       let items := schema.getObjVal? "items" |>.toOption.getD (Json.mkObj [])
-      s!"Array {schemaTypeToLean items}"
-    | "object" => "Json"
-    | _ => "Json"
+      .array (parseTypeShape items)
+    | "object" => .primitive "Json"
+    | _ => .primitive "Json"
 
-def propertyToLeanType (prop : SchemaProperty) : String :=
-  let baseType := schemaTypeToLean prop.schemaType
-  if prop.isRequired || prop.hasDefault then baseType
-  else if baseType.contains ' ' then s!"Option ({baseType})" else s!"Option {baseType}"
+/-- Convert TypeShape to a string representation (for dependency analysis). -/
+def TypeShape.toString : TypeShape → String
+  | .primitive s => s
+  | .array inner => s!"Array {inner.toString}"
+  | .option inner => s!"Option {inner.toString}"
+  | .ref name => name
+
+/-- Get the referenced type names from a TypeShape (for dependency analysis). -/
+def TypeShape.getRefs : TypeShape → List String
+  | .primitive _ => []
+  | .array inner => inner.getRefs
+  | .option inner => inner.getRefs
+  | .ref name => [name]
+
+/-- Check if a TypeShape contains a reference to the given type name. -/
+def TypeShape.containsRef (shape : TypeShape) (typeName : String) : Bool :=
+  shape.getRefs.contains typeName
+
+/-- Convert TypeShape to syntax (TSyntax `term). -/
+partial def TypeShape.toTermStx : TypeShape → CommandElabM (TSyntax `term)
+  | .primitive "String" => `(String)
+  | .primitive "Nat" => `(Nat)
+  | .primitive "Int" => `(Int)
+  | .primitive "Bool" => `(Bool)
+  | .primitive "Json" => `(Json)
+  | .primitive s => `($(mkIdent (Name.mkSimple s)))
+  | .array inner => do let innerStx ← inner.toTermStx; `(Array $innerStx)
+  | .option inner => do let innerStx ← inner.toTermStx; `(Option $innerStx)
+  | .ref name => `($(mkIdent (Name.mkSimple name)))
+
+/-- Get the TypeShape for a property, wrapping in Option if not required. -/
+def propertyTypeShape (prop : SchemaProperty) : TypeShape :=
+  let baseShape := parseTypeShape prop.schemaType
+  if prop.isRequired || prop.hasDefault then baseShape
+  else .option baseShape
 
 /-! ## Schema Parsing -/
 
@@ -155,10 +183,10 @@ def parseSchema (json : Json) : Except String (List SchemaDefinition) := do
 /-! ## Dependency Ordering -/
 
 def getDefinitionDependencies (def_ : SchemaDefinition) : List String :=
-  let reserved := ["List", "Option", "Array", "String", "Int", "Nat", "Bool", "Json"]
-  let fromProps := def_.properties.map (schemaTypeToLean ·.schemaType)
-  let fromVariants := def_.variants.flatMap (·.properties.map (schemaTypeToLean ·.schemaType))
-  (fromProps ++ fromVariants).flatMap (·.splitOn " ") |>.filter (!reserved.contains ·) |>.eraseDups
+  let fromProps := def_.properties.flatMap fun p => (parseTypeShape p.schemaType).getRefs
+  let fromVariants := def_.variants.flatMap fun v =>
+    v.properties.flatMap fun p => (parseTypeShape p.schemaType).getRefs
+  (fromProps ++ fromVariants).eraseDups
 
 partial def topologicalSort (defs : List SchemaDefinition) : List SchemaDefinition := Id.run do
   let names := defs.map (·.name)
@@ -190,34 +218,13 @@ def mkFieldIdent (jsonName : String) : Ident :=
 def mkTypeIdent (typeName : String) : Ident :=
   mkIdent (Name.mkSimple typeName)
 
-/-- Build type expression from schema as TSyntax `term -/
-partial def schemaTypeToTermStx (schema : Json) : CommandElabM (TSyntax `term) := do
-  if let some ref := schema.getObjValAs? String "$ref" |>.toOption then
-    let typeName := resolveRef ref
-    return ← `($(mkTypeIdent typeName))
-  else if schema.getObjVal? "const" |>.isOk then
-    return ← `(String)
-  else
-    match schema.getObjValAs? String "type" |>.toOption.getD "any" with
-    | "string" => `(String)
-    | "integer" =>
-      let min := schema.getObjValAs? Int "minimum" |>.toOption
-      if min == some 0 then `(Nat) else `(Int)
-    | "boolean" => `(Bool)
-    | "array" =>
-      let items := schema.getObjVal? "items" |>.toOption.getD (Json.mkObj [])
-      let itemType ← schemaTypeToTermStx items
-      `(Array $itemType)
-    | "object" => `(Json)
-    | _ => `(Json)
+/-- Create a qualified identifier (e.g., TypeName.ctorName or TypeName.toJson) -/
+def mkQualIdent (typeName memberName : String) : Ident :=
+  mkIdent (Name.mkStr (Name.mkSimple typeName) memberName)
 
 /-- Build full property type with Option wrapper if needed -/
-def propertyToTypeStx (prop : SchemaProperty) : CommandElabM (TSyntax `term) := do
-  let baseType ← schemaTypeToTermStx prop.schemaType
-  if prop.isRequired || prop.hasDefault then
-    return baseType
-  else
-    `(Option $baseType)
+def propertyToTypeStx (prop : SchemaProperty) : CommandElabM (TSyntax `term) :=
+  (propertyTypeShape prop).toTermStx
 
 /-- Build default value syntax for a property -/
 def mkDefaultValueStx (prop : SchemaProperty) : CommandElabM (Option (TSyntax `term)) := do
@@ -335,7 +342,7 @@ def genEnum (def_ : SchemaDefinition) : CommandElabM Unit := do
   -- Generate FromJson instance
   let fromJsonMatchArms ← def_.enumValues.toArray.mapM fun v => do
     -- Build qualified constructor name as TypeName.CtorName
-    let qualCtorName := mkIdent (Name.mkStr (Name.mkSimple def_.name) (toCamelCase v))
+    let qualCtorName := mkQualIdent def_.name (toCamelCase v)
     let result ← `(.ok $qualCtorName)
     `(Term.matchAltExpr| | $(quote v) => $result)
 
@@ -353,14 +360,10 @@ def genEnum (def_ : SchemaDefinition) : CommandElabM Unit := do
 
 /-! ## Tagged Union Generation -/
 
-/-- Check if a property type references the given type name (for self-recursion detection) -/
-def isRecursiveRef (pType : String) (typeName : String) : Bool :=
-  pType.splitOn " " |>.any (· == typeName)
-
 /-- Detect if a tagged union is self-recursive -/
 def detectSelfRecursion (def_ : SchemaDefinition) : Bool :=
   def_.variants.any fun v =>
-    v.properties.any fun p => isRecursiveRef (propertyToLeanType p) def_.name
+    v.properties.any fun p => (propertyTypeShape p).containsRef def_.name
 
 def genTaggedUnion (def_ : SchemaDefinition) : CommandElabM Unit := do
   let typeName := mkTypeIdent def_.name
@@ -391,7 +394,7 @@ def genTaggedUnion (def_ : SchemaDefinition) : CommandElabM Unit := do
   -- Generate partial toJson function
   let toJsonArms ← def_.variants.toArray.mapM fun v => do
     -- Build qualified constructor pattern as TypeName.CtorName
-    let qualCtorName := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) (toCamelCase v.discriminatorValue))
+    let qualCtorName := mkQualIdent typeNameStr (toCamelCase v.discriminatorValue)
     let discPair ← `(($(quote discField), $(quote v.discriminatorValue)))
 
     if v.properties.isEmpty then
@@ -402,14 +405,12 @@ def genTaggedUnion (def_ : SchemaDefinition) : CommandElabM Unit := do
         mkIdent (Name.mkSimple ("p_" ++ toCamelCase p.name))
 
       let fieldPairs ← (v.properties.toArray.zip paramNames).mapM fun (p, paramVar) => do
-        let pType := propertyToLeanType p
-        let baseType := schemaTypeToLean p.schemaType
-        let toJsonFnIdent := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) "toJson")
-        if isSelfRecursive && isRecursiveRef pType typeNameStr then
-          if baseType.startsWith "Array " then
-            `(($(quote p.name), Json.arr (($paramVar).map $toJsonFnIdent)))
-          else
-            `(($(quote p.name), $toJsonFnIdent $paramVar))
+        let shape := propertyTypeShape p
+        let toJsonFnIdent := mkQualIdent typeNameStr "toJson"
+        if isSelfRecursive && shape.containsRef typeNameStr then
+          match shape with
+          | .array _ => `(($(quote p.name), Json.arr (($paramVar).map $toJsonFnIdent)))
+          | _ => `(($(quote p.name), $toJsonFnIdent $paramVar))
         else
           `(($(quote p.name), Lean.toJson $paramVar))
 
@@ -417,7 +418,7 @@ def genTaggedUnion (def_ : SchemaDefinition) : CommandElabM Unit := do
       let result ← `(Json.mkObj [$discPair, $[$fieldPairs],*])
       `(Term.matchAltExpr| | $qualCtorName $paramNames* => $result)
 
-  let toJsonFnName := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) "toJson")
+  let toJsonFnName := mkQualIdent typeNameStr "toJson"
   -- Build match expression as body
   let toJsonMatch ← `(match x with $toJsonArms:matchAlt*)
   let toJsonDef ← `(command|
@@ -432,7 +433,7 @@ def genTaggedUnion (def_ : SchemaDefinition) : CommandElabM Unit := do
 
   -- Generate partial fromJson? function
   let fromJsonArms ← def_.variants.toArray.mapM fun v => do
-    let qualCtorName := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) (toCamelCase v.discriminatorValue))
+    let qualCtorName := mkQualIdent typeNameStr (toCamelCase v.discriminatorValue)
 
     if v.properties.isEmpty then
       let result ← `(.ok $qualCtorName)
@@ -440,13 +441,13 @@ def genTaggedUnion (def_ : SchemaDefinition) : CommandElabM Unit := do
     else
       let bindings ← v.properties.toArray.mapM fun p => do
         let fieldName := mkFieldIdent p.name
-        let pType := propertyToLeanType p
-        let baseType := schemaTypeToLean p.schemaType
+        let shape := propertyTypeShape p
         let fieldType ← propertyToTypeStx p
-        let fromJsonFnIdent := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) "fromJson?")
+        let fromJsonFnIdent := mkQualIdent typeNameStr "fromJson?"
 
-        if isSelfRecursive && isRecursiveRef pType typeNameStr then
-          if baseType.startsWith "Array " then
+        if isSelfRecursive && shape.containsRef typeNameStr then
+          match shape with
+          | .array _ =>
             let jsonVarName := mkIdent (Name.mkSimple (toCamelCase p.name ++ "Json"))
             let listVarName := mkIdent (Name.mkSimple (toCamelCase p.name ++ "List"))
             return #[
@@ -454,9 +455,8 @@ def genTaggedUnion (def_ : SchemaDefinition) : CommandElabM Unit := do
               ← `(Parser.Term.doSeqItem| let $listVarName ← ($jsonVarName).toList.mapM $fromJsonFnIdent),
               ← `(Parser.Term.doSeqItem| let $fieldName : $fieldType := ($listVarName).toArray)
             ]
-          else if pType.startsWith "Option " then
+          | .option _ =>
             let jsonVarName := mkIdent (Name.mkSimple (toCamelCase p.name ++ "Json"))
-            -- For optional recursive fields, build match arms separately
             let someArm ← `(Term.matchAltExpr| | some jv => ($fromJsonFnIdent jv).map some)
             let noneArm ← `(Term.matchAltExpr| | none => .ok none)
             let arms := #[someArm, noneArm]
@@ -465,7 +465,7 @@ def genTaggedUnion (def_ : SchemaDefinition) : CommandElabM Unit := do
               ← `(Parser.Term.doSeqItem| let $jsonVarName := j.getObjVal? $(quote p.name) |>.toOption),
               ← `(Parser.Term.doSeqItem| let $fieldName : $fieldType ← ($matchExpr))
             ]
-          else
+          | _ =>
             let jsonVarName := mkIdent (Name.mkSimple (toCamelCase p.name ++ "Json"))
             return #[
               ← `(Parser.Term.doSeqItem| let $jsonVarName ← j.getObjVal? $(quote p.name)),
@@ -486,7 +486,7 @@ def genTaggedUnion (def_ : SchemaDefinition) : CommandElabM Unit := do
   let errorArm ← `(Term.matchAltExpr| | x => .error (s!"invalid {$(quote typeNameStr)} {$(quote discField)}: " ++ x))
   let allFromJsonArms := fromJsonArms.push errorArm
 
-  let fromJsonFnName := mkIdent (Name.mkStr (Name.mkSimple typeNameStr) "fromJson?")
+  let fromJsonFnName := mkQualIdent typeNameStr "fromJson?"
   -- Build match expression for discriminator
   let fromJsonMatch ← `(match discVal with $allFromJsonArms:matchAlt*)
   -- Build the body expression without explicit type annotation

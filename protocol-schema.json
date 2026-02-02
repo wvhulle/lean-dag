@@ -7,6 +7,7 @@
     "LineCharacterPosition": {
       "type": "object",
       "description": "A position in a text document following the Language Server Protocol specification. Both line and character are zero-indexed. The character offset is measured in UTF-16 code units, which matters when dealing with unicode characters outside the Basic Multilingual Plane.",
+      "x-field-order": ["line", "character"],
       "properties": {
         "line": {
           "type": "integer",
@@ -28,6 +29,7 @@
     "FullyQualifiedDocumentPosition": {
       "type": "object",
       "description": "A fully-qualified position within a document, combining a file URI with a line/character position. Used when referencing locations across different files in the workspace.",
+      "x-field-order": ["uri", "position"],
       "properties": {
         "uri": {
           "type": "string",
@@ -68,6 +70,7 @@
     "SubexpressionAnnotation": {
       "type": "object",
       "description": "Metadata attached to a subexpression within a tagged text tree. Currently contains only diff information, but may be extended with additional subexpression metadata in the future (e.g., hover information, semantic tokens).",
+      "x-field-order": ["diff_status"],
       "properties": {
         "diff_status": {
           "$ref": "#/$defs/SubexpressionDiffTag",
@@ -81,6 +84,7 @@
         {
           "type": "object",
           "description": "A leaf node containing plain text with no nested structure or annotations.",
+          "x-field-order": ["kind", "text"],
           "properties": {
             "kind": {
               "const": "text"
@@ -99,6 +103,7 @@
         {
           "type": "object",
           "description": "An internal node that concatenates multiple child elements. Used to build complex expressions from smaller parts while preserving the tree structure.",
+          "x-field-order": ["kind", "children"],
           "properties": {
             "kind": {
               "const": "append"
@@ -120,6 +125,7 @@
         {
           "type": "object",
           "description": "A tagged node that wraps content with subexpression metadata. Used to attach diff highlighting and other annotations to specific parts of an expression.",
+          "x-field-order": ["kind", "subexpression_info", "tagged_content"],
           "properties": {
             "kind": {
               "const": "tag"
@@ -146,6 +152,7 @@
     "NavigationTargetLocation": {
       "type": "object",
       "description": "A navigation target for go-to-definition or go-to-type-definition commands. Contains the file URI and position where the definition or type is located.",
+      "x-field-order": ["uri", "position"],
       "properties": {
         "uri": {
           "type": "string",
@@ -166,6 +173,7 @@
     "PreresolvedNavigationTargets": {
       "type": "object",
       "description": "Pre-resolved navigation locations for an expression, hypothesis, or goal. These are computed eagerly when building the proof DAG so the TUI can navigate without additional server round-trips.",
+      "x-field-order": ["definition", "type_definition"],
       "properties": {
         "definition": {
           "$ref": "#/$defs/NavigationTargetLocation",
@@ -181,6 +189,7 @@
     "ProofContextHypothesis": {
       "type": "object",
       "description": "Information about a hypothesis (local variable or assumption) in the proof context. Hypotheses appear in the left panel of the TUI and can be referenced by tactics.",
+      "x-field-order": ["name", "id", "type", "value", "is_proof_term", "is_typeclass_instance", "is_removed", "navigation_locations"],
       "properties": {
         "name": {
           "type": "string",
@@ -228,6 +237,7 @@
     "ProofObligation": {
       "type": "object",
       "description": "Information about a goal (proof obligation) that needs to be solved. Goals appear in the main proof panel and represent what the user needs to prove.",
+      "x-field-order": ["id", "type", "username", "is_removed", "navigation_locations"],
       "properties": {
         "type": {
           "$ref": "#/$defs/AnnotatedTextTree",
@@ -260,6 +270,7 @@
     "TacticProofState": {
       "type": "object",
       "description": "A complete proof state containing all goals and hypotheses at a specific point in the proof. Each tactic node has a state before and after the tactic application.",
+      "x-field-order": ["goals", "hypotheses"],
       "properties": {
         "goals": {
           "type": "array",
@@ -283,6 +294,7 @@
     "TacticApplicationInfo": {
       "type": "object",
       "description": "Information about a single tactic application in the proof. Contains the tactic text and analysis of what hypotheses and theorems it references.",
+      "x-field-order": ["text", "hypothesis_dependencies", "referenced_theorems"],
       "properties": {
         "text": {
           "type": "string",
@@ -313,6 +325,7 @@
     "ProofDagTacticNode": {
       "type": "object",
       "description": "A node in the proof DAG representing a single tactic application. Contains the tactic, its position in source, the proof state before and after, and structural information about parent/child relationships.",
+      "x-field-order": ["id", "tactic", "position", "proof_state_before", "proof_state_after", "new_hypothesis_indices", "parent", "children", "depth", "has_unsolved_spawned_goals"],
       "properties": {
         "id": {
           "type": "integer",
@@ -382,6 +395,7 @@
     "CompleteProofDag": {
       "type": "object",
       "description": "The complete proof DAG (directed acyclic graph) for a theorem or definition. Contains all tactic nodes and their relationships, plus metadata about the proof structure.",
+      "x-field-order": ["definition_name", "initial_proof_state", "nodes", "root_node_id", "current_node_id", "orphans"],
       "properties": {
         "nodes": {
           "type": "array",
@@ -437,6 +451,7 @@
     "LocalBinding": {
       "type": "object",
       "description": "Information about a local binding (variable) in term-mode code. Analogous to ProofContextHypothesis but for functional programming context.",
+      "x-field-order": ["name", "id", "binding_kind", "type", "value", "is_implicit", "is_instance", "is_removed", "navigation_locations"],
       "properties": {
         "name": {
           "type": "string",
@@ -489,6 +504,7 @@
     "FunctionalDagNode": {
       "type": "object",
       "description": "A node in the functional DAG representing a term-mode expression step. Analogous to ProofDagTacticNode but for functional code showing data flow.",
+      "x-field-order": ["id", "expression", "expected_type", "position", "bindings_before", "bindings_after", "new_binding_indices", "parent", "children", "depth"],
       "properties": {
         "id": {
           "type": "integer",
@@ -563,6 +579,7 @@
     "CompleteFunctionalDag": {
       "type": "object",
       "description": "The complete functional DAG for a term-mode definition. Shows data flow through let-bindings, function calls, and pattern matches. Analogous to CompleteProofDag.",
+      "x-field-order": ["definition_name", "definition_type", "initial_bindings", "nodes", "root_node_id", "current_node_id", "orphans"],
       "properties": {
         "nodes": {
           "type": "array",
@@ -613,6 +630,7 @@
     "EditorCursorPosition": {
       "type": "object",
       "description": "Information about the current cursor position in the editor. Sent from the editor to lean-dag to request proof information at that location.",
+      "x-field-order": ["uri", "position", "method"],
       "properties": {
         "uri": {
           "type": "string",
@@ -640,6 +658,7 @@
         {
           "type": "object",
           "description": "Sent when the TUI client first connects to the lean-dag server. Provides information about the server's operating mode, the port this worker is using, and the file it is handling.",
+          "x-field-order": ["type", "server_mode", "file_uri", "port", "port_range_min", "port_range_max"],
           "properties": {
             "type": {
               "const": "Connected"
@@ -680,6 +699,7 @@
         {
           "type": "object",
           "description": "Sent when the editor cursor moves to a new position. Allows the TUI to track cursor location even when no proof DAG is available.",
+          "x-field-order": ["type", "uri", "position", "method"],
           "properties": {
             "type": {
               "const": "Cursor"
@@ -709,6 +729,7 @@
         {
           "type": "object",
           "description": "Sent when a proof DAG is available at the current cursor position. Contains the complete proof structure for rendering in the TUI.",
+          "x-field-order": ["type", "uri", "position", "dag"],
           "properties": {
             "type": {
               "const": "ProofDag"
@@ -737,6 +758,7 @@
         {
           "type": "object",
           "description": "Sent when a functional DAG is available at the current cursor position in term-mode code. Contains the dataflow structure for rendering in the TUI.",
+          "x-field-order": ["type", "uri", "position", "dag"],
           "properties": {
             "type": {
               "const": "FunctionalDag"
@@ -765,6 +787,7 @@
         {
           "type": "object",
           "description": "Sent when an error occurs during proof DAG extraction or other server operations. The TUI should display the error message to the user.",
+          "x-field-order": ["type", "error"],
           "properties": {
             "type": {
               "const": "Error"
@@ -788,6 +811,7 @@
         {
           "type": "object",
           "description": "Request the editor to navigate to a specific position. Used when the user selects a navigation target in the TUI (e.g., go-to-definition on a hypothesis).",
+          "x-field-order": ["type", "uri", "position"],
           "properties": {
             "type": {
               "const": "Navigate"
@@ -812,6 +836,7 @@
         {
           "type": "object",
           "description": "Explicitly request a proof DAG at a specific position. Deprecated: the server now sends proof DAGs automatically on hover events. Kept for backwards compatibility.",
+          "x-field-order": ["type", "uri", "position", "mode"],
           "properties": {
             "type": {
               "const": "GetProofDag"

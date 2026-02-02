@@ -1,5 +1,5 @@
 import Lean
-import LeanDag.SchemaCodegen
+import JsonSchemaToLean
 
 /-!
 # Protocol Types for LeanDag

@@ -4,6 +4,8 @@ open Lake DSL
 package «lean-dag» where
   testDriver := "«lean-dag-tests»"
 
+require «json-schema-to-lean» from git "https://codeberg.org/wvhulle/json-schema-to-lean" @ "main"
+
 /-- Target that ensures lean-dag binary is built -/
 target «lean-dag-bin» pkg : System.FilePath := do
   if let some exe := pkg.findLeanExe? `«lean-dag» then

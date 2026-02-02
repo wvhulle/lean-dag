@@ -233,33 +233,33 @@ def buildDag (steps : List ParsedTermStep) (position : Lsp.Position) (definition
 
 /-! ## Main Entry Point -/
 
-/-- Check if a tactic is a user-visible tactic (not internal elaboration from `do` notation). -/
-def isUserTactic (tacticInfo : Elab.TacticInfo) : Bool :=
-  -- `do` notation generates synthetic tactics with specific stx kinds
-  -- User-visible tactics have meaningful syntax nodes
+/-- Check if a tactic is from a `by` proof block (not internal `do` elaboration). -/
+def isByProofTactic (tacticInfo : Elab.TacticInfo) : Bool :=
+  -- Check the syntax to see if it's a real proof tactic
   match tacticInfo.stx with
   | .node _ kind _ =>
-    -- Check if this is a real user tactic vs internal elaboration
-    -- `do` blocks use synthetic tactics from Lean.Parser.Term.do* kinds
     let kindStr := kind.toString
-    -- Real proof tactics: intro, exact, apply, simp, rw, have, etc.
-    -- Internal `do` tactics: doSeqItem, doLet, doLetArrow, etc.
-    !kindStr.startsWith "Lean.Parser.Term.do" &&
-    !kindStr.startsWith "Lean.Parser.Term.let" &&
-    kindStr != "Lean.Parser.Term.byTactic"
+    -- Proof tactics live in Lean.Parser.Tactic namespace
+    -- `do` notation uses Lean.Parser.Term.do* and similar
+    kindStr.startsWith "Lean.Parser.Tactic" ||
+    -- Also check for common tactic commands
+    kindStr == "Lean.Parser.Command.declaration"
+  | .atom _ val =>
+    -- Atom-based tactics like `trivial`, `assumption`, etc.
+    val == "trivial" || val == "assumption" || val == "rfl" || val == "decide"
   | _ => false
 
 /-- Check if InfoTree contains term-mode code (not a `by` proof block). -/
 def isTermModeTree (infoTree : InfoTree) : Bool :=
-  -- A tree is term-mode if it has TermInfo but no real user tactics
+  -- A tree is term-mode if it has TermInfo but no real `by` proof tactics
   -- (`do` notation generates TacticInfo internally, but those aren't user proof tactics)
-  let hasUserTactic := infoTree.foldInfo (init := false) fun _ info acc =>
+  let hasByProofTactic := infoTree.foldInfo (init := false) fun _ info acc =>
     match info with
-    | .ofTacticInfo tacticInfo => acc || isUserTactic tacticInfo
+    | .ofTacticInfo tacticInfo => acc || isByProofTactic tacticInfo
     | _ => acc
   let hasTermInfo := infoTree.foldInfo (init := false) fun _ info acc =>
     acc || info matches .ofTermInfo _
-  hasTermInfo && !hasUserTactic
+  hasTermInfo && !hasByProofTactic
 
 /-- Parse term-mode InfoTree and build functional DAG. -/
 def computeFunctionalDag (snap : Snapshots.Snapshot) (position : Lsp.Position) : RequestM (Option CompleteFunctionalDag) := do
